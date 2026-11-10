@@ -11,13 +11,23 @@ with different screen concepts.
 
 1. Inventory component usage across current consumers and identify the
    generic widgets and components reused without game-specific concepts.
-2. Explore a separate optional package or subpath for game-shaped
+2. Before extracting game-shaped components, add an opt-in, data-driven
+   composition DSL for generic UI needs: rows, columns, spacers, text,
+   buttons, checkboxes, text inputs, images, meters and basic panels.
+   Every component should accept an optional image override, drawn in
+   place of its canvas-drawn visual when available, using the existing
+   asset contract and themed fallback when unavailable. Keep layout and
+   hit testing stable, define content layering where needed, keep rendering
+   theme-driven, and leave state and action handling to consumers. Validate
+   the DSL against a real consumer screen so it provides a practical
+   reusable foundation rather than a second component framework.
+3. Explore a separate optional package or subpath for game-shaped
    screens, keeping `@hoard-engine/uikit`'s current exports intact during
    migration.
-3. Keep theme, geometry, widgets and environment contracts reusable;
+4. Keep theme, geometry, widgets and environment contracts reusable;
    ensure screen-specific view models remain data-only and do not import
    a game's domain model.
-4. Add consumer-level visual parity checks before moving or changing any
+5. Add consumer-level visual parity checks before moving or changing any
    renderer, and document the intended public entry points.
 
 ## Open questions

@@ -213,52 +213,79 @@ export const layoutHeroStatus = (
   const contentWidth = panelBounds.width - PANEL_PADDING * 2;
   const contentHeight = panelBounds.height - HEADER_HEIGHT - PANEL_PADDING * 2;
 
-  const slotColumnWidth = Math.floor(contentWidth * 0.25);
-  const middleColumnWidth = Math.floor(contentWidth * 0.35);
-  const rightColumnWidth = Math.max(
+  // Column geometry is driven by the inventory cells: the right column
+  // keeps its share, the cells then size the equipment cells (and with
+  // them the left column), and the middle column takes the remainder.
+  const rightColumnWidth = Math.floor(contentWidth * 0.38);
+
+  // Right column: the inventory grid above, the stat boxes below. The
+  // grid grows row by row beyond four rows when the inventory is larger
+  // than sixteen items, capped by the height the pinned stat column needs.
+  const statsTotalHeight =
+    vm.stats.length * STAT_HEIGHT + Math.max(0, vm.stats.length - 1) * STAT_GAP;
+  const statsTop = contentY + contentHeight - statsTotalHeight;
+  const gridTop = contentY + GRID_LABEL_HEIGHT;
+  const gridMaxHeight = Math.max(0, statsTop - gridTop - STAT_GAP);
+
+  const rows = Math.max(4, Math.ceil(vm.inventory.length / GRID_COLUMNS));
+  const cellWidth = Math.max(
+    24,
+    Math.floor(
+      (rightColumnWidth - (GRID_COLUMNS - 1) * GRID_GAP) / GRID_COLUMNS,
+    ),
+  );
+  const lineHeight = Math.floor((gridMaxHeight - (rows - 1) * GRID_GAP) / rows);
+  const cellHeight = Math.min(
+    Math.max(24, cellWidth),
+    Math.max(24, lineHeight),
+  );
+
+  const slotColumnWidth = cellWidth;
+  const middleColumnWidth = Math.max(
     0,
-    contentWidth - slotColumnWidth - middleColumnWidth - COLUMN_GAP * 2,
+    contentWidth - slotColumnWidth - rightColumnWidth - COLUMN_GAP * 2,
   );
   const middleX = contentX + slotColumnWidth + COLUMN_GAP;
   const rightX = middleX + middleColumnWidth + COLUMN_GAP;
 
-  // Left column: the three equipment slots stacked over the full height.
-  const slotCount = Math.max(1, vm.slots.length);
-  const slotHeight = Math.floor(
-    (contentHeight - SLOT_GAP * (slotCount - 1)) / slotCount,
-  );
+  // Left column: the equipment slots — a label above a cell the same size
+  // as an inventory cell, stacked from the top.
   const slots: HeroStatusSlotLayout[] = vm.slots.map((slot, slotIndex) => ({
     vm: slot,
     bounds: {
       x: contentX,
-      y: contentY + slotIndex * (slotHeight + SLOT_GAP),
+      y: contentY + slotIndex * (BOX_HEADER_HEIGHT + cellHeight + SLOT_GAP),
       width: slotColumnWidth,
-      height: slotHeight,
+      height: BOX_HEADER_HEIGHT + cellHeight,
     },
   }));
 
-  // Middle column: description panel above, status effects below.
-  const descriptionHeight = Math.floor(contentHeight * 0.55);
+  // Middle column: description panel above, status effects pinned to the
+  // same band as the stat boxes. Both headers sit outside their boxes, in
+  // the label strip above the panel they name — the description panel ends
+  // above the status-effects label.
   const descriptionBounds: Rect = {
     x: middleX,
-    y: contentY,
+    y: contentY + GRID_LABEL_HEIGHT,
     width: middleColumnWidth,
-    height: descriptionHeight,
+    height: Math.max(
+      0,
+      statsTop - GRID_LABEL_HEIGHT - SLOT_GAP - GRID_LABEL_HEIGHT - contentY,
+    ),
   };
   const statusEffectsBounds: Rect = {
     x: middleX,
-    y: contentY + descriptionHeight + SLOT_GAP,
+    y: statsTop,
     width: middleColumnWidth,
-    height: Math.max(0, contentHeight - descriptionHeight - SLOT_GAP),
+    height: Math.max(0, contentY + contentHeight - statsTop),
   };
 
-  // Status effect rows under the box header.
+  // Status effect rows inside the effects box.
   const bodyFont = composeFont(env.theme, env.theme.typography.sizes.xs);
   const effectRowHeight = 20;
   const effectGap = 6;
   const effectsMaxRows = Math.floor(
-    (statusEffectsBounds.height - BOX_HEADER_HEIGHT) /
-      (effectRowHeight + effectGap),
+    (statusEffectsBounds.height - effectGap) / (effectRowHeight + effectGap),
   );
   const effects: HeroStatusEffectLayout[] = vm.effects
     .slice(0, Math.max(0, effectsMaxRows))
@@ -268,7 +295,7 @@ export const layoutHeroStatus = (
         x: statusEffectsBounds.x + PANEL_PADDING,
         y:
           statusEffectsBounds.y +
-          BOX_HEADER_HEIGHT +
+          effectGap +
           effectIndex * (effectRowHeight + effectGap),
         width: statusEffectsBounds.width - PANEL_PADDING * 2,
         height: effectRowHeight,
@@ -321,25 +348,6 @@ export const layoutHeroStatus = (
       ).slice(0, Math.max(0, maxLines)),
     };
   }
-
-  // Right column: the inventory grid above, the stat boxes below. The
-  // grid grows row by row beyond four rows when the inventory is larger
-  // than sixteen items, capped by the height the pinned stat column needs.
-  const statsTotalHeight =
-    vm.stats.length * STAT_HEIGHT + Math.max(0, vm.stats.length - 1) * STAT_GAP;
-  const statsTop = contentY + contentHeight - statsTotalHeight;
-  const gridTop = contentY + GRID_LABEL_HEIGHT;
-  const gridMaxHeight = Math.max(0, statsTop - gridTop - STAT_GAP);
-
-  const rows = Math.max(4, Math.ceil(vm.inventory.length / GRID_COLUMNS));
-  const cellWidth = Math.floor(
-    (rightColumnWidth - (GRID_COLUMNS - 1) * GRID_GAP) / GRID_COLUMNS,
-  );
-  const lineHeight = Math.floor((gridMaxHeight - (rows - 1) * GRID_GAP) / rows);
-  const cellHeight = Math.min(
-    Math.max(24, cellWidth),
-    Math.max(24, lineHeight),
-  );
 
   const inventoryGrid: HeroStatusCellLayout[] = [];
   for (let index = 0; index < rows * GRID_COLUMNS; index++) {
@@ -434,11 +442,6 @@ export const renderHeroStatus = (
     theme.typography.sizes.sm,
     theme.typography.weights.bold,
   );
-  const itemNameFont = composeFont(
-    theme,
-    theme.typography.sizes.sm,
-    theme.typography.weights.bold,
-  );
   const bodyFont = composeFont(theme, theme.typography.sizes.xxs);
   const detailNameFont = composeFont(
     theme,
@@ -450,12 +453,6 @@ export const renderHeroStatus = (
     theme,
     theme.typography.sizes.sm,
     theme.typography.weights.bold,
-  );
-  const iconFont = composeFont(
-    theme,
-    theme.typography.sizes.display,
-    theme.typography.weights.regular,
-    theme.typography.families.plain,
   );
 
   ctx.save();
@@ -492,7 +489,8 @@ export const renderHeroStatus = (
 
   ctx.textBaseline = 'top';
 
-  // Left column: equipment slots.
+  // Left column: equipment slots — label above a cell the same size as
+  // an inventory cell (sprite, emoji fallback, or the empty label).
   layout.slots.forEach((slot) => {
     const { bounds, vm: slotVm } = slot;
 
@@ -500,9 +498,16 @@ export const renderHeroStatus = (
     ctx.fillStyle = theme.palette.text.headerDialog;
     ctx.font = boxHeaderFont;
     ctx.textAlign = 'left';
-    ctx.fillText(slotVm.labelText, bounds.x, bounds.y + 4);
+    const label = truncateText(
+      ctx,
+      slotVm.labelText,
+      Math.max(bounds.width, 30),
+      boxHeaderFont,
+      PER_CHAR_WIDTH_FALLBACK,
+    );
+    ctx.fillText(label, bounds.x, bounds.y + 4);
 
-    // Slot box
+    // Slot cell
     const boxBounds: Rect = {
       ...bounds,
       y: bounds.y + BOX_HEADER_HEIGHT,
@@ -514,7 +519,7 @@ export const renderHeroStatus = (
       boxBounds.y,
       boxBounds.width,
       boxBounds.height,
-      5,
+      4,
     );
     ctx.fillStyle = slotVm.isSelected
       ? theme.palette.surface.rowSelected
@@ -529,6 +534,7 @@ export const renderHeroStatus = (
     ctx.stroke();
 
     if (slotVm.isEmpty) {
+      if (!slotVm.nameText) return;
       ctx.fillStyle = theme.palette.text.faint;
       ctx.font = bodyFont;
       ctx.textAlign = 'center';
@@ -536,7 +542,7 @@ export const renderHeroStatus = (
       const name = truncateText(
         ctx,
         slotVm.nameText,
-        boxBounds.width - 12,
+        boxBounds.width - 8,
         bodyFont,
         PER_CHAR_WIDTH_FALLBACK,
       );
@@ -549,68 +555,46 @@ export const renderHeroStatus = (
       return;
     }
 
-    // Equipped item: sprite (emoji icon fallback) with name and effect.
-    const iconSize = Math.min(boxBounds.height - 20, 48);
-    const hasIconColumn = Boolean(slotVm.sprite || slotVm.icon);
-    const iconX = boxBounds.x + 6;
+    const iconSize = Math.min(boxBounds.width - 8, boxBounds.height - 8);
+    const iconX = boxBounds.x + Math.floor((boxBounds.width - iconSize) / 2);
     const iconY = boxBounds.y + Math.floor((boxBounds.height - iconSize) / 2);
     const drawn = slotVm.sprite
       ? drawSpriteFrame(ctx, ui.assets, slotVm.sprite, iconX, iconY, iconSize)
       : false;
     if (!drawn && slotVm.icon) {
       ctx.fillStyle = theme.palette.text.inventoryItem;
-      ctx.font = iconFont;
+      ctx.font = composeFont(
+        theme,
+        theme.typography.sizes.lg,
+        theme.typography.weights.regular,
+        theme.typography.families.plain,
+      );
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(slotVm.icon, iconX + iconSize / 2, iconY + iconSize / 2);
       ctx.textBaseline = 'top';
     }
-
-    const textLeft = hasIconColumn ? iconX + iconSize + 8 : boxBounds.x + 8;
-    const textWidth = boxBounds.x + boxBounds.width - 8 - textLeft;
-    const nameTop = iconY + Math.max(0, Math.floor(iconSize / 2) - 24);
-
-    ctx.fillStyle = theme.palette.text.bright;
-    ctx.font = itemNameFont;
-    ctx.textAlign = 'left';
-    const name = truncateText(
-      ctx,
-      slotVm.nameText,
-      textWidth,
-      itemNameFont,
-      PER_CHAR_WIDTH_FALLBACK,
-    );
-    ctx.fillText(name, textLeft, nameTop);
-
-    ctx.fillStyle = theme.palette.text.cardDetail;
-    ctx.font = bodyFont;
-    const effect = truncateText(
-      ctx,
-      slotVm.effectText,
-      textWidth,
-      bodyFont,
-      PER_CHAR_WIDTH_FALLBACK,
-    );
-    ctx.fillText(effect, textLeft, nameTop + 20);
   });
 
-  // Middle column: description panel.
+  // Middle column: description panel, its header above the box.
   const desc = layout.descriptionBounds;
-  drawRoundedRect(ctx, desc.x, desc.y, desc.width, desc.height, 5);
-  ctx.fillStyle = theme.palette.surface.row;
-  ctx.fill();
-  ctx.lineWidth = theme.shape.strokeWidth.thin;
-  ctx.strokeStyle = theme.palette.border.row;
-  ctx.stroke();
-
   ctx.fillStyle = theme.palette.text.headerDialog;
   ctx.font = boxHeaderFont;
   ctx.textAlign = 'left';
-  ctx.fillText(vm.descriptionHeaderText, desc.x + PANEL_PADDING, desc.y + 6);
+  ctx.fillText(vm.descriptionHeaderText, desc.x, desc.y - GRID_LABEL_HEIGHT);
 
-  if (layout.detail) {
+  if (desc.height > 0) {
+    drawRoundedRect(ctx, desc.x, desc.y, desc.width, desc.height, 5);
+    ctx.fillStyle = theme.palette.surface.row;
+    ctx.fill();
+    ctx.lineWidth = theme.shape.strokeWidth.thin;
+    ctx.strokeStyle = theme.palette.border.row;
+    ctx.stroke();
+  }
+
+  if (layout.detail && desc.height > 0) {
     const { vm: detailVm, descriptionLines } = layout.detail;
-    let textTop = desc.y + BOX_HEADER_HEIGHT + 16;
+    let textTop = desc.y + 10;
 
     ctx.fillStyle = theme.palette.text.bright;
     ctx.font = detailNameFont;
@@ -700,9 +684,19 @@ export const renderHeroStatus = (
     }
   }
 
-  // Middle column: status effects panel.
+  // Middle column: status effects panel, pinned to the stat column's band,
+  // its header above the box.
   const effectsPanel = layout.statusEffectsBounds;
   if (effectsPanel.height > 0) {
+    ctx.fillStyle = theme.palette.text.headerDialog;
+    ctx.font = boxHeaderFont;
+    ctx.textAlign = 'left';
+    ctx.fillText(
+      vm.statusEffectsHeaderText,
+      effectsPanel.x,
+      effectsPanel.y - GRID_LABEL_HEIGHT,
+    );
+
     drawRoundedRect(
       ctx,
       effectsPanel.x,
@@ -716,15 +710,6 @@ export const renderHeroStatus = (
     ctx.lineWidth = theme.shape.strokeWidth.thin;
     ctx.strokeStyle = theme.palette.border.row;
     ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.headerDialog;
-    ctx.font = boxHeaderFont;
-    ctx.textAlign = 'left';
-    ctx.fillText(
-      vm.statusEffectsHeaderText,
-      effectsPanel.x + PANEL_PADDING,
-      effectsPanel.y + 6,
-    );
 
     layout.effects.forEach((effect) => {
       const { bounds, vm: effectVm } = effect;
