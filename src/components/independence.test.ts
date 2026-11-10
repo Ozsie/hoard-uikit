@@ -9,7 +9,7 @@
 // itself provides (the translator is the identity), never a default.
 
 import { describe, expect, it } from 'vitest';
-import { createRecordingContext } from '../testing/recordingContext';
+import { createRecordingContext } from '../testing/index';
 import { defaultTheme } from '@hoard-engine/primitives';
 import type { UiContext, UiEnv } from '../env';
 
@@ -52,6 +52,12 @@ import {
   layoutHeroCards,
   renderHeroCards,
 } from './heroCards';
+import {
+  hitTestHeroStatus,
+  layoutHeroStatus,
+  renderHeroStatus,
+  type HeroStatusViewModel,
+} from './heroStatus';
 import {
   hitTestHeroSelection,
   layoutHeroSelection,
@@ -133,25 +139,6 @@ describe('component independence (hand-built view models)', () => {
           armourText: '🥋 Mail (1)',
           shieldText: '🛡️ None (0)',
           inventoryButtonIcon: '🎒',
-          inventory: {
-            heroId: 'hero-1',
-            titleText: 'Hero One inventory',
-            emptyText: '(Empty)',
-            closeIcon: '✕',
-            items: [
-              {
-                itemIndex: 0,
-                nameText: 'Potion',
-                descriptionText: 'Heals',
-                hasUseButton: true,
-                isUsable: true,
-                isUsed: false,
-                useText: 'Use',
-                usedText: 'Used',
-                icon: '🧪',
-              },
-            ],
-          },
         },
         {
           heroId: 'hero-2',
@@ -161,7 +148,6 @@ describe('component independence (hand-built view models)', () => {
           isTarget: true,
           hpText: 'HP: 5',
           inventoryButtonIcon: '🎒',
-          inventory: null,
         },
       ],
     };
@@ -175,6 +161,113 @@ describe('component independence (hand-built view models)', () => {
     renderHeroCards(layout, vm, ui(rec.ctx));
     expect(hit?.kind).toBe('inventoryButton');
     expect(rendersSomething(rec.log)).toBe(true);
+  });
+
+  it('heroStatus lays out, hit-tests and renders', () => {
+    const vm: HeroStatusViewModel = {
+      heroId: 'hero-1',
+      headerText: 'Hero One - Status',
+      closeIcon: '✕',
+      slots: [
+        {
+          slotId: 'weapon',
+          labelText: 'Weapon',
+          nameText: 'Sword',
+          effectText: '(2)',
+          isEmpty: false,
+          isSelected: false,
+          icon: '🗡️',
+        },
+        {
+          slotId: 'armour',
+          labelText: 'Armour',
+          nameText: 'None',
+          effectText: '',
+          isEmpty: true,
+          isSelected: false,
+        },
+        {
+          slotId: 'shield',
+          labelText: 'Shield',
+          nameText: 'Small shield',
+          effectText: '(1)',
+          isEmpty: false,
+          isSelected: false,
+          icon: '🛡️',
+        },
+      ],
+      descriptionHeaderText: 'Description',
+      detail: {
+        nameText: 'Potion',
+        effectText: '(heals)',
+        descriptionText: 'A bubbling draught sealed with wax.',
+        hasUse: true,
+        isUsable: true,
+        isUsed: false,
+        useText: 'Use',
+        usedText: 'Used',
+      },
+      statusEffectsHeaderText: 'Status effects',
+      effects: [{ effectId: 'blinded', labelText: 'BLINDED' }],
+      inventoryLabelText: 'Inventory',
+      inventory: [
+        {
+          itemIndex: 0,
+          nameText: 'Potion',
+          isSelected: true,
+          icon: '🧪',
+        },
+        {
+          itemIndex: 1,
+          nameText: 'Herbs',
+          isSelected: false,
+          icon: '🌿',
+        },
+      ],
+      inventoryEmptyText: '(Empty)',
+      stats: [
+        { statId: 'health', labelText: 'Health', valueText: '3', maxText: '8' },
+        {
+          statId: 'experience',
+          labelText: 'Experience',
+          valueText: '12',
+          maxText: '18',
+        },
+        {
+          statId: 'actions',
+          labelText: 'Actions',
+          valueText: '1',
+          maxText: '2',
+        },
+        { statId: 'steps', labelText: 'Steps', valueText: '2', maxText: '3' },
+      ],
+    };
+    const layout = layoutHeroStatus(vm, viewBounds, env);
+    const cell = layout.inventoryGrid[0];
+    const hit = hitTestHeroStatus(layout, {
+      x: cell.bounds.x + 2,
+      y: cell.bounds.y + 2,
+    });
+    const rec = createRecordingContext();
+    renderHeroStatus(layout, vm, ui(rec.ctx), viewBounds);
+    expect(hit).toEqual({ kind: 'item', itemIndex: 0 });
+    expect(rendersSomething(rec.log)).toBe(true);
+
+    // Screen with no detail selected: use button abstains, gift hits work.
+    const bare = { ...vm, detail: null, inventory: [], effects: [] };
+    const bareLayout = layoutHeroStatus(bare, viewBounds, env);
+    const bareHit = hitTestHeroStatus(bareLayout, {
+      x: bareLayout.panelBounds.x + 5,
+      y: bareLayout.panelBounds.y + 500,
+    });
+    const bareRec = createRecordingContext();
+    renderHeroStatus(bareLayout, bare, ui(bareRec.ctx), viewBounds);
+    expect(bareHit?.kind).toBe('panel');
+    expect(rendersSomething(bareRec.log)).toBe(true);
+
+    // A click outside the panel dismisses the screen.
+    const backdrop = hitTestHeroStatus(layout, { x: 2, y: 2 });
+    expect(backdrop).toEqual({ kind: 'backdrop' });
   });
 
   it('monsterCards lays out, hit-tests and renders', () => {

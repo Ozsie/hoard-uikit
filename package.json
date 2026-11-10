@@ -1,6 +1,6 @@
 {
 	"name": "@hoard-engine/uikit",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "HOARD engine: theme-driven canvas UI chrome — kit widgets, components and the UiEnv/UiContext contracts over @hoard-engine/primitives",
 	"keywords": [
 		"canvas",

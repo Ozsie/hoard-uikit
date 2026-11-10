@@ -20,6 +20,7 @@ export * from './kit/textInput';
 export * from './kit/spriteFrame';
 export * from './components/topBar';
 export * from './components/heroCards';
+export * from './components/heroStatus';
 export * from './components/monsterCards';
 export * from './components/dungeonIntro';
 export * from './components/menu';
