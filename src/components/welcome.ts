@@ -6,11 +6,14 @@
 // background art arrives through the asset port; hits are the semantic
 // button ids.
 
-import type { Rect, UiTheme } from '@hoard-engine/primitives';
-import { isPointInRect, composeFont } from '@hoard-engine/primitives';
-import { drawModalFrame, drawModalHeader } from '../kit/modalFrame';
-import { drawListRow, listRowStyles } from '../kit/listRow';
+import type { Rect } from '@hoard-engine/primitives';
+import { isPointInRect } from '@hoard-engine/primitives';
 import type { UiContext } from '../env';
+import {
+  layoutComposition,
+  renderComposition,
+  type CompositionNode,
+} from './composition';
 
 export interface WelcomeButtonVm {
   /** Hit-test identity: the button id. */
@@ -45,7 +48,6 @@ export interface WelcomeLayout {
 /** Semantic hit: the pressed welcome button. */
 export type WelcomeHit = string | null;
 
-const BUTTON_RADIUS = 6;
 const ROW_HEIGHT = 48;
 const ROW_GAP = 8;
 // Rows never shrink below this, even on very short views.
@@ -53,6 +55,16 @@ const MIN_ROW_HEIGHT = 28;
 const HEADER_HEIGHT = 48;
 const PADDING_X = 18;
 const PADDING_Y = 16;
+
+const positioned = (node: CompositionNode, bounds: Rect): CompositionNode => ({
+  ...node,
+  width: bounds.width,
+  height: bounds.height,
+  alignSelf: 'start',
+  justifySelf: 'start',
+  offsetX: bounds.x,
+  offsetY: bounds.y,
+});
 
 /**
  * Cover-fit bounds: the image scaled uniformly so it covers the whole
@@ -188,47 +200,28 @@ export const renderWelcomeBackground = (
   viewBounds: Rect,
   options?: RenderWelcomeOptions,
 ): void => {
-  const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
-  if (!ctx) return;
-  const { width: viewWidth, height: viewHeight } = viewBounds;
-
-  const image =
-    options?.backgroundImage !== undefined
-      ? options.backgroundImage
-      : ui.assets.get(vm.backgroundAssetId);
-  if (image) {
-    // Image-cache art exposes naturalWidth/Height; other canvas sources
-    // fall back to their intrinsic size.
-    const dims = image as {
-      naturalWidth?: number;
-      naturalHeight?: number;
-      width?: number;
-      height?: number;
-    };
-    const fit = getCoverFitBounds(
-      dims.naturalWidth || dims.width || 0,
-      dims.naturalHeight || dims.height || 0,
-      viewWidth,
-      viewHeight,
-    );
-    ctx.drawImage(image, fit.x, fit.y, fit.width, fit.height);
-  } else {
-    ctx.fillStyle = theme.palette.surface.welcome;
-    ctx.fillRect(0, 0, viewWidth, viewHeight);
-    const gradient = ctx.createRadialGradient(
-      viewWidth / 2,
-      viewHeight / 2,
-      Math.min(viewWidth, viewHeight) / 3,
-      viewWidth / 2,
-      viewHeight / 2,
-      Math.max(viewWidth, viewHeight) / 1.5,
-    );
-    gradient.addColorStop(0, theme.palette.overlay.vignetteStart);
-    gradient.addColorStop(1, theme.palette.overlay.vignetteEnd);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, viewWidth, viewHeight);
-  }
+  if (!ui.ctx) return;
+  const bounds = {
+    x: 0,
+    y: 0,
+    width: viewBounds.width,
+    height: viewBounds.height,
+  };
+  const image: CompositionNode = {
+    type: 'image',
+    assetId: vm.backgroundAssetId,
+    fit: 'cover',
+    fallback: 'welcome',
+    ...(options?.backgroundImage !== undefined
+      ? {
+          imageOverride: {
+            source: options.backgroundImage,
+            fit: 'cover',
+          },
+        }
+      : {}),
+  };
+  renderComposition(layoutComposition(image, bounds, ui), ui);
 };
 
 /**
@@ -238,16 +231,30 @@ export const renderWelcomeFooter = (
   ui: UiContext,
   layout: WelcomeLayout,
 ): void => {
-  const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
-  if (!ctx || !layout.footerText) return;
+  if (!ui.ctx || !layout.footerText) return;
   const { width: viewWidth, height: viewHeight } = layout.viewBounds;
-  ctx.fillStyle = theme.palette.text.faint;
-  ctx.font = composeFont(theme, theme.typography.sizes.xxs);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  // The baseline sits 12px above the canvas bottom edge.
-  ctx.fillText(layout.footerText, viewWidth / 2, viewHeight - 12);
+  const node: CompositionNode = {
+    type: 'text',
+    text: layout.footerText,
+    role: 'footer',
+    align: 'center',
+    baseline: 'bottom',
+    themeStyle: { textOrder: 'colorFirst' },
+  };
+  const bounds = { x: 0, y: viewHeight - 12, width: viewWidth, height: 0 };
+  renderComposition(
+    layoutComposition(
+      positioned(node, bounds),
+      {
+        x: 0,
+        y: 0,
+        width: viewWidth,
+        height: viewHeight,
+      },
+      ui,
+    ),
+    ui,
+  );
 };
 
 export const renderWelcome = (
@@ -257,45 +264,67 @@ export const renderWelcome = (
   options?: RenderWelcomeOptions,
 ): void => {
   if (!ui.ctx || !layout.hasContent) return;
-
-  const theme: UiTheme = ui.theme;
-
+  const { width: viewWidth, height: viewHeight } = layout.viewBounds;
+  const bounds = { x: 0, y: 0, width: viewWidth, height: viewHeight };
+  const background: CompositionNode = {
+    type: 'image',
+    assetId: vm.backgroundAssetId,
+    fit: 'cover',
+    fallback: 'welcome',
+    ...(options?.backgroundImage !== undefined
+      ? {
+          imageOverride: {
+            source: options.backgroundImage,
+            fit: 'cover',
+          },
+        }
+      : {}),
+  };
+  const children: CompositionNode[] = [
+    positioned(background, bounds),
+    positioned(
+      {
+        type: 'panel',
+        title: layout.headerText,
+        children: [],
+      },
+      layout.panelBounds,
+    ),
+    ...layout.buttons.map((button) =>
+      positioned(
+        {
+          type: 'button',
+          actionId: button.id,
+          label: button.label,
+          variant: 'row',
+        },
+        button.bounds,
+      ),
+    ),
+    ...(layout.footerText
+      ? [
+          positioned(
+            {
+              type: 'text',
+              text: layout.footerText,
+              role: 'footer',
+              align: 'center',
+              baseline: 'bottom',
+              themeStyle: { textOrder: 'colorFirst' },
+            },
+            { x: 0, y: viewHeight - 12, width: viewWidth, height: 0 },
+          ),
+        ]
+      : []),
+  ];
+  const composition = layoutComposition(
+    { type: 'stack', children },
+    bounds,
+    ui,
+  );
   ui.ctx.save();
-
-  renderWelcomeBackground(ui, vm, layout.viewBounds, options);
-
-  // Centered modal panel, save/load dialog style.
-  const p = layout.panelBounds;
-  drawModalFrame(ui.ctx, p, theme);
-
-  // Header line.
-  drawModalHeader(ui.ctx, p, layout.headerText, theme);
-
-  // Button rows, dialog row style.
-  for (const button of layout.buttons) {
-    const isHovered = options?.hoveredButtonId === button.id;
-    const b = button.bounds;
-    drawListRow(
-      ui.ctx,
-      b,
-      listRowStyles(theme, isHovered ? 'hover' : 'rest'),
-      BUTTON_RADIUS,
-    );
-
-    ui.ctx.font = composeFont(
-      theme,
-      theme.typography.sizes.lg,
-      theme.typography.weights.bold,
-    );
-    ui.ctx.fillStyle = isHovered
-      ? theme.palette.text.bright
-      : theme.palette.text.dialogValue;
-    ui.ctx.textAlign = 'left';
-    ui.ctx.textBaseline = 'middle';
-    ui.ctx.fillText(button.label, b.x + 12, b.y + b.height / 2);
-  }
-
-  renderWelcomeFooter(ui, layout);
-
+  renderComposition(composition, ui, {
+    hoveredActionId: options?.hoveredButtonId,
+  });
   ui.ctx.restore();
 };

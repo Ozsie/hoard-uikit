@@ -7,6 +7,7 @@ import {
   composeFont,
   drawRoundedRect,
   isPointInRect,
+  truncateText,
   wrapTextMeasured,
 } from '@hoard-engine/primitives';
 import type { AssetId, SpriteRef, UiContext, UiEnv } from '../env';
@@ -44,10 +45,15 @@ export interface CompositionThemeStyle {
   readonly fillColor?: string;
   readonly strokeColor?: string;
   readonly fontSize?: keyof UiTheme['typography']['sizes'];
+  readonly fontScale?: number;
   readonly fontWeight?: keyof UiTheme['typography']['weights'];
   readonly fontFamily?: keyof UiTheme['typography']['families'];
   readonly strokeWidth?: keyof UiTheme['shape']['strokeWidth'];
   readonly radius?: number;
+  readonly roundedRectMode?: 'primitive' | 'native';
+  readonly shapeStyleOrder?: 'pathFirst' | 'styleFirst' | 'allStylesFirst';
+  readonly strokeStyleOrder?: 'styleFirst' | 'widthFirst';
+  readonly textOrder?: 'fontFirst' | 'colorFirst';
 }
 
 interface CompositionNodeBase {
@@ -66,6 +72,7 @@ interface CompositionNodeBase {
   readonly clipChildren?: boolean;
   readonly themeStyle?: CompositionThemeStyle;
   readonly hoverThemeStyle?: CompositionThemeStyle;
+  readonly opacity?: keyof UiTheme['alpha'] | 'opaque' | 'opaqueReset';
 }
 
 interface CompositionContainerBase extends CompositionNodeBase {
@@ -118,12 +125,19 @@ export interface CompositionText extends CompositionNodeBase {
   readonly lineHeight?: number;
   readonly maxLines?: number;
   readonly clip?: boolean;
+  readonly clipOrder?: 'clipFirst' | 'styleFirst';
+  readonly textInsetX?: number;
+  readonly truncateWidth?: number;
+  readonly truncateMaxCharacters?: number;
+  readonly skipFontWrite?: boolean;
   readonly decoration?: 'strikethrough';
 }
 
 export interface CompositionFill extends CompositionNodeBase {
   readonly type: 'fill';
-  readonly shape?: 'rect' | 'roundedRect';
+  readonly shape?: 'rect' | 'roundedRect' | 'circle';
+  /** Clockwise radii starting at top-left; enables generic asymmetric corners. */
+  readonly cornerRadii?: readonly [number, number, number, number];
 }
 
 export interface CompositionLine extends CompositionNodeBase {
@@ -161,7 +175,7 @@ export interface CompositionTextInput extends CompositionNodeBase {
 export type CompositionImage = CompositionNodeBase & {
   readonly type: 'image';
   readonly fit?: CompositionImageFit;
-  readonly fallback?: 'surface' | 'welcome';
+  readonly fallback?: 'surface' | 'welcome' | 'none';
   readonly fallbackText?: string;
 } & (
     | { readonly assetId: AssetId; readonly sprite?: never }
@@ -239,7 +253,8 @@ const textFont = (
   const defaultWeight = role === 'heading' ? 'bold' : 'regular';
   return composeFont(
     env.theme,
-    env.theme.typography.sizes[style?.fontSize ?? defaultSize],
+    env.theme.typography.sizes[style?.fontSize ?? defaultSize] *
+      (style?.fontScale ?? 1),
     env.theme.typography.weights[style?.fontWeight ?? defaultWeight],
     style?.fontFamily
       ? env.theme.typography.families[style.fontFamily]
@@ -646,12 +661,69 @@ const drawOverride = (
 const drawFallbackTile = (ui: UiContext, bounds: Rect): void => {
   const { ctx, theme } = ui;
   ctx.fillStyle = theme.palette.surface.row;
-  drawRoundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, 4);
+  drawCompositionRoundedRect(
+    ctx,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    4,
+  );
   ctx.fill();
   ctx.strokeStyle = theme.palette.border.row;
   ctx.lineWidth = theme.shape.strokeWidth.thin;
-  drawRoundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, 4);
+  drawCompositionRoundedRect(
+    ctx,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    4,
+  );
   ctx.stroke();
+};
+
+const drawCompositionRoundedRect = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  useNative = false,
+): void => {
+  if (useNative && typeof ctx.roundRect === 'function') {
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, radius);
+  } else {
+    drawRoundedRect(ctx, x, y, width, height, radius);
+  }
+};
+
+const drawRoundedRectWithCorners = (
+  ctx: CanvasRenderingContext2D,
+  bounds: Rect,
+  radii: readonly [number, number, number, number],
+): void => {
+  const [topLeft, topRight, bottomRight, bottomLeft] = radii;
+  const { x, y, width, height } = bounds;
+  ctx.beginPath();
+  ctx.moveTo(x + topLeft, y);
+  ctx.lineTo(x + width - topRight, y);
+  ctx.arcTo(x + width, y, x + width, y + topRight, topRight);
+  ctx.lineTo(x + width, y + height - bottomRight);
+  ctx.arcTo(
+    x + width,
+    y + height,
+    x + width - bottomRight,
+    y + height,
+    bottomRight,
+  );
+  ctx.lineTo(x + bottomLeft, y + height);
+  ctx.arcTo(x, y + height, x, y + height - bottomLeft, bottomLeft);
+  ctx.lineTo(x, y + topLeft);
+  ctx.arcTo(x, y, x + topLeft, y, topLeft);
+  ctx.closePath();
 };
 
 const drawWelcomeFallback = (ui: UiContext, bounds: Rect): void => {
@@ -687,7 +759,7 @@ const drawCompositionImageFallback = (
   node: CompositionImage,
   bounds: Rect,
 ): void => {
-  drawImageFallback(ui, bounds, node.fallback);
+  if (node.fallback !== 'none') drawImageFallback(ui, bounds, node.fallback);
   if (node.fallbackText) {
     drawText(
       ui,
@@ -712,9 +784,17 @@ const drawText = (
   lineHeightPx = role === 'heading' ? 28 : 22,
   clip = false,
   decoration?: CompositionText['decoration'],
+  textInsetX = 0,
+  skipFontWrite = false,
+  clipFirst = false,
 ): void => {
   const { ctx, theme } = ui;
-  ctx.font = textFont(ui, role, style);
+  if (clip && clipFirst) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+    ctx.clip();
+  }
   const defaultTextToken =
     role === 'heading'
       ? 'headerDialog'
@@ -723,22 +803,30 @@ const drawText = (
         : role === 'muted'
           ? 'muted'
           : 'body';
-  ctx.fillStyle =
+  const fillStyle =
     style?.textColor ?? theme.palette.text[style?.text ?? defaultTextToken];
+  const font = textFont(ui, role, style);
+  if (style?.textOrder === 'colorFirst') {
+    ctx.fillStyle = fillStyle;
+    if (!skipFontWrite) ctx.font = font;
+  } else {
+    if (!skipFontWrite) ctx.font = font;
+    ctx.fillStyle = fillStyle;
+  }
   ctx.textAlign = align;
   ctx.textBaseline = baseline;
-  const x =
-    align === 'center'
-      ? bounds.x + bounds.width / 2
-      : align === 'right' || align === 'end'
-        ? bounds.x + bounds.width
-        : bounds.x;
-  if (clip) {
+  if (clip && !clipFirst) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
     ctx.clip();
   }
+  const x =
+    align === 'center'
+      ? bounds.x + bounds.width / 2
+      : align === 'right' || align === 'end'
+        ? bounds.x + bounds.width
+        : bounds.x + textInsetX;
   lines.forEach((line, index) => {
     const y =
       baseline === 'bottom'
@@ -789,11 +877,25 @@ const drawCheckbox = (
     style?.border ??
     (checked ? 'checkboxSelected' : hovered ? 'rowHover' : 'input');
   ctx.fillStyle = style?.fillColor ?? theme.palette.surface[surfaceToken];
-  drawRoundedRect(ctx, box.x, box.y, box.width, box.height, style?.radius ?? 4);
+  drawCompositionRoundedRect(
+    ctx,
+    box.x,
+    box.y,
+    box.width,
+    box.height,
+    style?.radius ?? 4,
+  );
   ctx.fill();
   ctx.strokeStyle = style?.strokeColor ?? theme.palette.border[borderToken];
   ctx.lineWidth = theme.shape.strokeWidth[style?.strokeWidth ?? 'thin'];
-  drawRoundedRect(ctx, box.x, box.y, box.width, box.height, style?.radius ?? 4);
+  drawCompositionRoundedRect(
+    ctx,
+    box.x,
+    box.y,
+    box.width,
+    box.height,
+    style?.radius ?? 4,
+  );
   ctx.stroke();
   if (checked) {
     ctx.strokeStyle =
@@ -843,7 +945,7 @@ const drawStyledButton = (
     : isSecondary
       ? 'buttonSecondary'
       : 'buttonPrimary';
-  drawRoundedRect(
+  drawCompositionRoundedRect(
     ctx,
     bounds.x,
     bounds.y,
@@ -895,7 +997,7 @@ const drawStyledTextInput = (
   style: CompositionThemeStyle,
 ): void => {
   const { ctx, theme } = ui;
-  drawRoundedRect(
+  drawCompositionRoundedRect(
     ctx,
     bounds.x,
     bounds.y,
@@ -933,7 +1035,7 @@ const drawStyledTextInput = (
   }
 };
 
-const renderNode = (
+const renderNodeContent = (
   layout: CompositionLayoutNode,
   ui: UiContext,
   options: CompositionRenderOptions,
@@ -945,7 +1047,7 @@ const renderNode = (
       if (!drawOverride(ui, node, bounds)) {
         if (node.themeStyle) {
           const style = node.themeStyle;
-          drawRoundedRect(
+          drawCompositionRoundedRect(
             ctx,
             bounds.x,
             bounds.y,
@@ -1009,9 +1111,21 @@ const renderNode = (
       return;
     case 'text':
       if (!drawOverride(ui, node, bounds)) {
+        const lines =
+          node.truncateWidth === undefined
+            ? (layout.textLines ?? [node.text])
+            : [
+                truncateText(
+                  ctx,
+                  node.text,
+                  node.truncateWidth,
+                  textFont(ui, node.role, node.themeStyle),
+                  node.truncateMaxCharacters ?? 8,
+                ),
+              ];
         drawText(
           ui,
-          layout.textLines ?? [node.text],
+          lines,
           bounds,
           node.role,
           node.align,
@@ -1020,6 +1134,9 @@ const renderNode = (
           lineHeight(node),
           node.clip,
           node.decoration,
+          node.textInsetX,
+          node.skipFontWrite,
+          node.clipOrder === 'clipFirst',
         );
       }
       return;
@@ -1031,26 +1148,98 @@ const renderNode = (
         (style?.overlay
           ? theme.palette.overlay[style.overlay]
           : theme.palette.surface[style?.surface ?? 'row']);
-      if (node.shape === 'roundedRect') {
-        drawRoundedRect(
-          ctx,
-          bounds.x,
-          bounds.y,
-          bounds.width,
-          bounds.height,
-          style?.radius ?? 4,
-        );
+      if (
+        node.shape !== 'circle' &&
+        (style?.shapeStyleOrder === 'styleFirst' ||
+          style?.shapeStyleOrder === 'allStylesFirst')
+      ) {
         ctx.fillStyle = fill;
-        ctx.fill();
-      } else {
-        ctx.fillStyle = fill;
-        ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
       }
-      if (style?.border || style?.strokeColor) {
+      if (style?.shapeStyleOrder === 'allStylesFirst') {
         ctx.strokeStyle =
           style.strokeColor ?? theme.palette.border[style.border ?? 'hairline'];
         ctx.lineWidth = theme.shape.strokeWidth[style.strokeWidth ?? 'thin'];
-        if (node.shape === 'roundedRect') {
+      }
+      if (node.shape === 'circle') {
+        ctx.beginPath();
+        ctx.arc(
+          bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2,
+          Math.min(bounds.width, bounds.height) / 2,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fillStyle = fill;
+        ctx.fill();
+      } else if (node.shape === 'roundedRect') {
+        if (node.cornerRadii) {
+          drawRoundedRectWithCorners(ctx, bounds, node.cornerRadii);
+        } else {
+          drawCompositionRoundedRect(
+            ctx,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            style?.radius ?? 4,
+            style?.roundedRectMode === 'native',
+          );
+        }
+        if (
+          style?.shapeStyleOrder !== 'styleFirst' &&
+          style?.shapeStyleOrder !== 'allStylesFirst'
+        ) {
+          ctx.fillStyle = fill;
+        }
+        ctx.fill();
+      } else {
+        if (
+          style?.shapeStyleOrder !== 'styleFirst' &&
+          style?.shapeStyleOrder !== 'allStylesFirst'
+        ) {
+          ctx.fillStyle = fill;
+        }
+        ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+      }
+      if (style?.border || style?.strokeColor) {
+        if (style.shapeStyleOrder !== 'allStylesFirst') {
+          if (style.strokeStyleOrder === 'widthFirst') {
+            ctx.lineWidth =
+              theme.shape.strokeWidth[style.strokeWidth ?? 'thin'];
+            ctx.strokeStyle =
+              style.strokeColor ??
+              theme.palette.border[style.border ?? 'hairline'];
+          } else {
+            ctx.strokeStyle =
+              style.strokeColor ??
+              theme.palette.border[style.border ?? 'hairline'];
+            ctx.lineWidth =
+              theme.shape.strokeWidth[style.strokeWidth ?? 'thin'];
+          }
+        }
+        if (style.shapeStyleOrder === 'styleFirst') {
+          if (node.shape === 'roundedRect') {
+            if (node.cornerRadii) {
+              drawRoundedRectWithCorners(ctx, bounds, node.cornerRadii);
+            } else {
+              drawCompositionRoundedRect(
+                ctx,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                style.radius ?? 4,
+                style.roundedRectMode === 'native',
+              );
+            }
+          } else if (node.shape === 'rect') {
+            ctx.beginPath();
+            ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+          }
+        }
+        if (node.shape === 'circle') {
+          ctx.stroke();
+        } else if (node.shape === 'roundedRect') {
           ctx.stroke();
         } else {
           ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
@@ -1252,7 +1441,7 @@ const renderNode = (
       if (!overridden) {
         ctx.fillStyle =
           style?.fillColor ?? theme.palette.surface[style?.surface ?? 'input'];
-        drawRoundedRect(
+        drawCompositionRoundedRect(
           ctx,
           bounds.x,
           bounds.y,
@@ -1264,7 +1453,7 @@ const renderNode = (
         ctx.strokeStyle =
           style?.strokeColor ?? theme.palette.border[style?.border ?? 'input'];
         ctx.lineWidth = theme.shape.strokeWidth[style?.strokeWidth ?? 'thin'];
-        drawRoundedRect(
+        drawCompositionRoundedRect(
           ctx,
           bounds.x,
           bounds.y,
@@ -1274,7 +1463,7 @@ const renderNode = (
         );
         ctx.stroke();
         ctx.fillStyle = theme.palette.surface[style?.surface ?? 'sliderFill'];
-        drawRoundedRect(
+        drawCompositionRoundedRect(
           ctx,
           bounds.x,
           bounds.y,
@@ -1289,6 +1478,32 @@ const renderNode = (
       return;
     }
   }
+};
+
+const renderNode = (
+  layout: CompositionLayoutNode,
+  ui: UiContext,
+  options: CompositionRenderOptions,
+): void => {
+  if (!layout.node.opacity) {
+    renderNodeContent(layout, ui, options);
+    return;
+  }
+  const { ctx, theme } = ui;
+  if (!ctx) return;
+  if (
+    layout.node.opacity === 'opaque' ||
+    layout.node.opacity === 'opaqueReset'
+  ) {
+    ctx.globalAlpha = 1;
+    renderNodeContent(layout, ui, options);
+    if (layout.node.opacity === 'opaqueReset') ctx.globalAlpha = 1;
+    return;
+  }
+  const currentAlpha = Number.isFinite(ctx.globalAlpha) ? ctx.globalAlpha : 1;
+  ctx.globalAlpha = currentAlpha * theme.alpha[layout.node.opacity];
+  renderNodeContent(layout, ui, options);
+  ctx.globalAlpha = currentAlpha;
 };
 
 /** Draws the tree back-to-front in child order through the supplied context. */

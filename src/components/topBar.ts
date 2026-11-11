@@ -6,13 +6,9 @@
 // consumes layout + view model + context.
 
 import type { Rect } from '@hoard-engine/primitives';
-import {
-  roundRectPath,
-  isPointInRect,
-  composeFont,
-  truncateText,
-} from '@hoard-engine/primitives';
+import { composeFont, isPointInRect } from '@hoard-engine/primitives';
 import type { UiContext, UiEnv } from '../env';
+import { type CompositionNode, layoutComposition, renderComposition, } from './composition';
 
 export interface TopBarViewModel {
   readonly menuLabel: string;
@@ -162,8 +158,7 @@ export const layoutTopBar = (
     vm.logEntries.length > 0
       ? logPaddingY * 2 + vm.logEntries.length * logItemHeight
       : 0;
-
-  const layout: TopBarLayout = {
+  return {
     topBar: {
       x: margin,
       y: top,
@@ -201,8 +196,6 @@ export const layoutTopBar = (
       height: dropdownHeight,
     },
   };
-
-  return layout;
 };
 
 export const hitTestTopBar = (
@@ -237,6 +230,16 @@ export interface RenderTopBarOptions {
   isLogOpen?: boolean;
 }
 
+const positioned = (node: CompositionNode, bounds: Rect): CompositionNode => ({
+  ...node,
+  width: bounds.width,
+  height: bounds.height,
+  alignSelf: 'start',
+  justifySelf: 'start',
+  offsetX: bounds.x,
+  offsetY: bounds.y,
+});
+
 export const renderTopBar = (
   layout: TopBarLayout,
   vm: TopBarViewModel,
@@ -244,7 +247,6 @@ export const renderTopBar = (
   options?: RenderTopBarOptions,
 ): void => {
   const { ctx } = ui;
-  const theme = ui.theme;
   if (!ctx || layout.topBar.width <= 0) return;
 
   const isMenuHovered = options?.isMenuHovered ?? false;
@@ -252,214 +254,190 @@ export const renderTopBar = (
   const isLogHovered = options?.isLogHovered ?? false;
   const isLogOpen = options?.isLogOpen ?? false;
 
-  const chipFontValue = chipFont(ui);
-  const logFont = composeFont(
-    theme,
-    theme.typography.sizes.md,
-    theme.typography.weights.regular,
-    theme.typography.families.mono,
-  );
+  const children: CompositionNode[] = [];
+  const addChip = (
+    bounds: Rect,
+    text: string,
+    surface: keyof UiContext['theme']['palette']['surface'],
+    border: keyof UiContext['theme']['palette']['border'],
+    textToken: keyof UiContext['theme']['palette']['text'],
+  ): void => {
+    if (bounds.width <= 0) return;
+    children.push(
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface,
+            border,
+            strokeWidth: 'thin',
+            radius: 4,
+            roundedRectMode: 'native',
+          },
+        },
+        bounds,
+      ),
+      positioned(
+        {
+          type: 'text',
+          text,
+          align: 'center',
+          baseline: 'middle',
+          themeStyle: {
+            text: textToken,
+            fontSize: 'lg',
+            fontFamily: 'plain',
+            textOrder: 'colorFirst',
+          },
+        },
+        bounds,
+      ),
+    );
+  };
 
-  ctx.save();
-
-  // 1. Menu Button
   const menu = layout.menuButton;
-  if (menu.width > 0) {
-    roundRectPath(ctx, menu.x, menu.y, menu.width, menu.height, 4);
-    ctx.fillStyle = isMenuHovered
-      ? theme.palette.surface.itemHover
-      : theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = isMenuHovered
-      ? theme.palette.border.soft
-      : theme.palette.border.subtle;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.bright;
-    ctx.font = chipFontValue;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      vm.menuLabel,
-      menu.x + menu.width / 2,
-      menu.y + menu.height / 2,
-    );
-  }
-
-  // 1b. Debug Button (if present)
-  const debug = layout.debugButton;
-  if (debug && debug.width > 0) {
-    roundRectPath(ctx, debug.x, debug.y, debug.width, debug.height, 4);
-    ctx.fillStyle = isDebugHovered
-      ? theme.palette.surface.itemHover
-      : theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = isDebugHovered
-      ? theme.palette.border.soft
-      : theme.palette.border.subtle;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.bright;
-    ctx.font = chipFontValue;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
+  addChip(
+    menu,
+    vm.menuLabel,
+    isMenuHovered ? 'itemHover' : 'item',
+    isMenuHovered ? 'soft' : 'subtle',
+    'bright',
+  );
+  if (layout.debugButton) {
+    addChip(
+      layout.debugButton,
       vm.debugLabel,
-      debug.x + debug.width / 2,
-      debug.y + debug.height / 2,
+      isDebugHovered ? 'itemHover' : 'item',
+      isDebugHovered ? 'soft' : 'subtle',
+      'bright',
     );
   }
 
-  // 2. Latest Log Event
   const log = layout.logSection;
   if (log.width > 0) {
-    roundRectPath(ctx, log.x, log.y, log.width, log.height, 4);
-    ctx.fillStyle = isLogOpen
-      ? theme.palette.surface.hudLogOpen
-      : isLogHovered
-        ? theme.palette.surface.hudLogHover
-        : theme.palette.surface.hudLog;
-    ctx.fill();
-    ctx.strokeStyle = isLogOpen
-      ? theme.palette.border.hudLogOpen
-      : isLogHovered
-        ? theme.palette.border.hudLogHover
-        : theme.palette.border.hudLog;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
+    children.push(
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface: isLogOpen
+              ? 'hudLogOpen'
+              : isLogHovered
+                ? 'hudLogHover'
+                : 'hudLog',
+            border: isLogOpen
+              ? 'hudLogOpen'
+              : isLogHovered
+                ? 'hudLogHover'
+                : 'hudLog',
+            strokeWidth: 'thin',
+            radius: 4,
+            roundedRectMode: 'native',
+          },
+        },
+        log,
+      ),
+    );
     if (vm.logText) {
-      const paddingInside = 8;
-      const maxTextWidth = log.width - paddingInside * 2;
-      const displayText = truncateText(
-        ctx,
-        vm.logText,
-        maxTextWidth,
-        logFont,
-        8,
+      children.push(
+        positioned(
+          {
+            type: 'text',
+            text: vm.logText,
+            align: 'left',
+            baseline: 'middle',
+            clip: true,
+            clipOrder: 'clipFirst',
+            textInsetX: 6,
+            truncateWidth: log.width - 16,
+            truncateMaxCharacters: 8,
+            themeStyle: {
+              text: 'success',
+              fontSize: 'md',
+              fontFamily: 'mono',
+              textOrder: 'colorFirst',
+            },
+          },
+          { x: log.x + 2, y: log.y, width: log.width - 4, height: log.height },
+        ),
       );
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(log.x + 2, log.y, log.width - 4, log.height);
-      ctx.clip();
-
-      ctx.fillStyle = theme.palette.text.success;
-      ctx.font = logFont;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(displayText, log.x + paddingInside, log.y + log.height / 2);
-      ctx.restore();
     }
   }
 
-  // 3. Score Counter
-  const score = layout.scoreCounter;
-  if (score.width > 0) {
-    roundRectPath(ctx, score.x, score.y, score.width, score.height, 4);
-    ctx.fillStyle = theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = theme.palette.border.hudScore;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.hudScore;
-    ctx.font = chipFontValue;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      vm.scoreText,
-      score.x + score.width / 2,
-      score.y + score.height / 2,
-    );
+  addChip(layout.scoreCounter, vm.scoreText, 'item', 'hudScore', 'hudScore');
+  if (layout.timerCounter) {
+    addChip(layout.timerCounter, vm.timerText, 'item', 'hudTimer', 'success');
   }
+  addChip(layout.turnCounter, vm.turnText, 'item', 'subtle', 'body');
 
-  // 3b. Timer Counter (speedrunner mode only)
-  const timer = layout.timerCounter;
-  if (timer && timer.width > 0) {
-    roundRectPath(ctx, timer.x, timer.y, timer.width, timer.height, 4);
-    ctx.fillStyle = theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = theme.palette.border.hudTimer;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.success;
-    ctx.font = chipFontValue;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      vm.timerText,
-      timer.x + timer.width / 2,
-      timer.y + timer.height / 2,
-    );
-  }
-
-  // 4. Turn Counter
-  const turn = layout.turnCounter;
-  if (turn.width > 0) {
-    roundRectPath(ctx, turn.x, turn.y, turn.width, turn.height, 4);
-    ctx.fillStyle = theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = theme.palette.border.subtle;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.fillStyle = theme.palette.text.body;
-    ctx.font = chipFontValue;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      vm.turnText,
-      turn.x + turn.width / 2,
-      turn.y + turn.height / 2,
-    );
-  }
-
-  // 5. Log Dropdown (if open)
   const dropdown = layout.logDropdown;
   if (isLogOpen && dropdown.width > 0 && vm.logEntries.length > 0) {
-    roundRectPath(
-      ctx,
-      dropdown.x,
-      dropdown.y,
-      dropdown.width,
-      dropdown.height,
-      4,
+    children.push(
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface: 'hudDropdown',
+            border: 'hudLog',
+            strokeWidth: 'thin',
+            radius: 4,
+            roundedRectMode: 'native',
+          },
+        },
+        dropdown,
+      ),
     );
-    ctx.fillStyle = theme.palette.surface.hudDropdown;
-    ctx.fill();
-    ctx.strokeStyle = theme.palette.border.hudLog;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    const paddingInside = 8;
-    const paddingY = 6;
-    const itemHeight = 20;
-    const maxTextWidth = dropdown.width - paddingInside * 2;
-
     vm.logEntries.forEach((entry, index) => {
-      const itemY = dropdown.y + paddingY + index * itemHeight;
-      const text = truncateText(ctx, entry, maxTextWidth, logFont, 8);
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(dropdown.x + 2, itemY, dropdown.width - 4, itemHeight);
-      ctx.clip();
-
-      ctx.fillStyle =
-        index === 0
-          ? theme.palette.text.success
-          : theme.palette.text.hudLogEntry;
-      ctx.font = logFont;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, dropdown.x + paddingInside, itemY + itemHeight / 2);
-      ctx.restore();
+      const itemY = dropdown.y + 6 + index * 20;
+      children.push(
+        positioned(
+          {
+            type: 'text',
+            text: entry,
+            align: 'left',
+            baseline: 'middle',
+            clip: true,
+            clipOrder: 'clipFirst',
+            textInsetX: 6,
+            truncateWidth: dropdown.width - 16,
+            truncateMaxCharacters: 8,
+            themeStyle: {
+              text: index === 0 ? 'success' : 'hudLogEntry',
+              fontSize: 'md',
+              fontFamily: 'mono',
+              textOrder: 'colorFirst',
+            },
+          },
+          {
+            x: dropdown.x + 2,
+            y: itemY,
+            width: dropdown.width - 4,
+            height: 20,
+          },
+        ),
+      );
     });
   }
 
+  const width = Math.max(
+    layout.topBar.x + layout.topBar.width,
+    dropdown.x + (isLogOpen ? dropdown.width : 0),
+  );
+  const height = Math.max(
+    layout.topBar.y + layout.topBar.height,
+    dropdown.y + (isLogOpen ? dropdown.height : 0),
+  );
+  ctx.save();
+  renderComposition(
+    layoutComposition(
+      { type: 'stack', children },
+      { x: 0, y: 0, width, height },
+      ui,
+    ),
+    ui,
+  );
   ctx.restore();
 };

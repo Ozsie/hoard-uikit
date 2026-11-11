@@ -5,20 +5,21 @@ sessionId: session-261110-211314-5cuj
 # Requirements
 
 ### Overview & Goals
-Evaluate how to make `@hoard-engine/uikit` more portable without a broad rewrite. The generic composition DSL and its `Welcome` pilot are complete; now reimplement the ten identified game-shaped components with that DSL in the game repository, remove those components from UIKit, and verify consumer parity.
+Evaluate how to make `@hoard-engine/uikit` more portable without a broad rewrite. The generic composition DSL and its `Welcome` pilot are complete; the ten game-shaped components have moved to the game repository. Now update the five remaining UIKit components (`topBar`, `menu`, `welcome`, `settings`, and `radialMenu`) to use the composition model while preserving public contracts and rendering behavior.
 
 ### Scope
-- **In scope:** The completed reuse inventory, composition DSL, and `Welcome` pilot; add reusable data-only composition capabilities for exact screen visuals/hits; then port `heroCards`, `heroStatus`, `monsterCards`, `dungeonIntro`, `saveLoadDialog`, `newGameDialog`, `heroSelection`, `eventCard`, `diary`, and `betweenDungeons` into consumer-owned composition trees; remove their UIKit source modules and public exports; preserve consumer-owned state, adapters, strings, assets, and rendering parity.
+- **In scope:** The completed reuse inventory, composition DSL, and `Welcome` pilot; port `heroCards`, `heroStatus`, `monsterCards`, `dungeonIntro`, `saveLoadDialog`, `newGameDialog`, `heroSelection`, `eventCard`, `diary`, and `betweenDungeons` into consumer-owned composition trees and remove their UIKit source modules and exports; then reimplement the remaining UIKit components `topBar`, `menu`, `welcome`, `settings`, and `radialMenu` using the composition interpreter while preserving their public contracts and rendering behavior.
 - **Out of scope:** Moving generic widgets or the composition DSL out of UIKit; adding game/framework dependencies to UIKit; changing pinned snapshots beyond the screen migrations explicitly approved by the user.
 
 ### Acceptance Criteria
-- Existing generic `layout`/`hitTest`/`render` contracts, semantic hits, theme tokens, translator/assets ports, and public exports remain compatible; only the ten named screen exports are removed.
+- Existing component `layout`/`hitTest`/`render` contracts, semantic hits, theme tokens, translator/assets ports, and public exports remain compatible; only the ten named game-shaped screen exports are removed.
 - DSL state and action handling remain consumer-owned; the DSL communicates actions through data/semantic identifiers.
 - An optional image replaces the corresponding canvas-drawn visual when available; missing images use a themed fallback without changing geometry or hit areas.
 - The DSL's usefulness is supported by consumer usage and `Welcome` parity evidence; this migration follows the user's decision to keep the ten game-shaped screens in the game repository.
 - The ten listed game-shaped renderers are implemented in the game repository using the public composition DSL, and are no longer part of UIKit's source or public surface.
 - Consumer semantic hits and required interactions remain compatible; reviewed visual differences from the composition migration are approved and captured in the consumer snapshots.
 - The DSL can express the mapped visual and semantic-hit requirements through plain nodes and data, without arbitrary consumer render callbacks or game-domain imports.
+- The five remaining UIKit components use the shared composition model and preserve their existing layout, semantic hits, themed rendering, assets, and public APIs.
 
 # Technical Design
 
@@ -123,3 +124,23 @@ UIKit no longer exports or contains the ten game-shaped renderers, while generic
 - Remove the ten named source modules from `src/index.ts` and the package; update UIKit independence/public-surface coverage and document the new package boundary.
 - Run UIKit `npm run check`, `npm test`, `npm run lint`, and `npm run prettier`, plus the relevant game component and parity suites with only the reviewed snapshot updates.
 - Update `README.md` and `TODO.md` with the final boundary and migration result; retain the game-side compositions as the only owners of these screens.
+
+### ✓ Step 9: Map the remaining UIKit component contracts and parity gates
+The `topBar`, `menu`, `welcome`, `settings`, and `radialMenu` implementations, consumer call sites, semantic hits, and rendering coverage are inventoried before refactoring.
+
+- Inspect each component's current layout/hit-test/render APIs, tests, consumer adapters/call sites, and pinned parity snapshots in both repositories.
+- Identify any composition DSL gaps and determine whether each component can be expressed without arbitrary render callbacks or changes to its public contract.
+- Record the map and verification gates in `TODO.md`; do not change output or snapshots during this inventory step.
+
+### ✓ Step 10: Reimplement the remaining UIKit components with composition
+The five remaining UIKit components are driven by composition trees while retaining their public contracts and existing rendered output and hit behavior.
+
+- Refactor `topBar`, `menu`, `welcome`, `settings`, and `radialMenu` to construct and interpret composition data; keep component-specific state, adapters, and behavior outside the generic DSL.
+- Add focused tests for layout, hits, and drawing parity; extend the DSL only for reusable typed/data-only capabilities required by the verified mappings.
+- Do not accept visual, geometry, or semantic-hit changes without explicit approval; keep consumers and pinned snapshots compatible.
+
+### ✓ Step 11: Verify and document the completed composition adoption
+UIKit checks and consumer parity coverage pass for the five refactored components, and the package documentation describes the resulting implementation boundary.
+
+- Run UIKit `npm run check`, `npm test`, `npm run lint`, and `npm run prettier`; run the relevant consumer tests and parity suites.
+- Update `README.md`, `ui-kit.md`, and `TODO.md` with the five composition-backed components and any constraints or remaining work.

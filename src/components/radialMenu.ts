@@ -6,10 +6,14 @@
 // prebuilt by the game-side adapter; the layout is pure geometry; hits
 // are semantic button ids.
 
-import { drawSpriteFrame } from '../kit/spriteFrame';
-import type { UiTheme } from '@hoard-engine/primitives';
+import type { Rect } from '@hoard-engine/primitives';
 import { composeFont } from '@hoard-engine/primitives';
 import type { SpriteRef, UiContext } from '../env';
+import {
+  layoutComposition,
+  renderComposition,
+  type CompositionNode,
+} from './composition';
 
 export interface RadialButtonVm {
   /** Hit-test identity: the button's index in the ring. */
@@ -93,72 +97,199 @@ export interface RenderRadialMenuOptions {
   readonly hoveredId?: number | null;
 }
 
+const positioned = (
+  node: CompositionNode,
+  bounds: { x: number; y: number; width: number; height: number },
+  originX = 0,
+  originY = 0,
+): CompositionNode => ({
+  ...node,
+  width: bounds.width,
+  height: bounds.height,
+  alignSelf: 'start',
+  justifySelf: 'start',
+  offsetX: bounds.x - originX,
+  offsetY: bounds.y - originY,
+});
+
+const getTooltipBounds = (
+  ctx: CanvasRenderingContext2D,
+  theme: UiContext['theme'],
+  button: { x: number; y: number; radius: number; label: string },
+  saveContext = true,
+): { x: number; y: number; width: number; height: number } => {
+  const font = composeFont(
+    theme,
+    theme.typography.sizes.md,
+    theme.typography.weights.regular,
+    theme.typography.families.compact,
+  );
+  if (saveContext) ctx.save();
+  ctx.font = font;
+  const textWidth =
+    typeof ctx.measureText === 'function'
+      ? ctx.measureText(button.label).width
+      : button.label.length * 7;
+  if (saveContext) ctx.restore();
+  const width = textWidth + 16;
+  const height = 20;
+  return {
+    x: button.x - width / 2,
+    y: button.y - button.radius - height - 4,
+    width,
+    height,
+  };
+};
+
+const tooltipNodes = (
+  button: { x: number; y: number; radius: number; label: string },
+  bounds: Rect,
+  originX: number,
+  originY: number,
+): CompositionNode[] => [
+  positioned(
+    {
+      type: 'fill',
+      shape: 'roundedRect',
+      themeStyle: {
+        overlay: 'tooltip',
+        border: 'soft',
+        strokeWidth: 'thin',
+        radius: 4,
+        roundedRectMode: 'native',
+        shapeStyleOrder: 'allStylesFirst',
+      },
+    },
+    bounds,
+    originX,
+    originY,
+  ),
+  positioned(
+    {
+      type: 'text',
+      text: button.label,
+      align: 'center',
+      baseline: 'middle',
+      skipFontWrite: true,
+      themeStyle: {
+        text: 'bright',
+        fontSize: 'md',
+        fontFamily: 'compact',
+        textOrder: 'colorFirst',
+      },
+    },
+    bounds,
+    originX,
+    originY,
+  ),
+];
+
 export const renderRadialMenu = (
   layout: RadialMenuLayout,
   ui: UiContext,
   options?: RenderRadialMenuOptions,
 ): void => {
   const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
   if (!ctx || layout.items.length === 0) return;
-
-  ctx.save();
-  for (const btn of layout.items) {
-    const isHovered = options?.hoveredId === btn.button.id;
-
-    // Draw circular button background
-    ctx.beginPath();
-    ctx.arc(btn.x, btn.y, btn.radius, 0, Math.PI * 2);
-    ctx.fillStyle = isHovered
-      ? theme.palette.hover.radialFill
-      : theme.palette.overlay.scrimStrong;
-    ctx.fill();
-    ctx.lineWidth = theme.shape.strokeWidth.regular;
-    ctx.strokeStyle = isHovered
-      ? theme.palette.border.ringHover
-      : theme.palette.border.ring;
-    ctx.stroke();
-
-    // Draw button icon: item sprite if available, emoji icon otherwise
-    const spriteDrawn = btn.button.sprite
-      ? drawSpriteFrame(
-          ctx,
-          ui.assets,
-          btn.button.sprite,
-          btn.x - Math.round(btn.radius * 0.75),
-          btn.y - Math.round(btn.radius * 0.75),
-          Math.round(btn.radius * 1.5),
-        )
-      : false;
-    if (!spriteDrawn) {
-      ctx.fillStyle = theme.palette.text.bright;
-      ctx.font = `${Math.round(btn.radius)}px ${
-        theme.typography.families.plain
-      }`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(btn.button.icon, btn.x, btn.y);
-    }
-  }
-
-  // Draw tooltip for hovered button if present
   const hoveredId = options?.hoveredId;
-  if (hoveredId !== undefined && hoveredId !== null && hoveredId >= 0) {
-    const hoveredBtn = layout.items.find(
-      (item) => item.button.id === hoveredId,
-    );
-    if (hoveredBtn) {
-      renderRadialTooltip(
-        ctx,
+  const hoveredButton =
+    hoveredId !== undefined && hoveredId !== null && hoveredId >= 0
+      ? layout.items.find((item) => item.button.id === hoveredId)
+      : undefined;
+  const minX = Math.min(...layout.items.map((item) => item.x - item.radius));
+  const minY = Math.min(...layout.items.map((item) => item.y - item.radius));
+  const maxX = Math.max(...layout.items.map((item) => item.x + item.radius));
+  const maxY = Math.max(...layout.items.map((item) => item.y + item.radius));
+  const rootBounds = {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+  const children: CompositionNode[] = layout.items.flatMap((item) => {
+    const isHovered = hoveredId === item.button.id;
+    const circle = {
+      x: item.x - item.radius,
+      y: item.y - item.radius,
+      width: item.radius * 2,
+      height: item.radius * 2,
+    };
+    const iconStyle = {
+      text: 'bright' as const,
+      fontSize: 'md' as const,
+      fontScale: Math.round(item.radius) / ui.theme.typography.sizes.md,
+      fontFamily: 'plain' as const,
+      textOrder: 'colorFirst' as const,
+    };
+    const icon = item.button.sprite
+      ? positioned(
+          {
+            type: 'image',
+            sprite: item.button.sprite,
+            fallback: 'none',
+            fallbackText: item.button.icon,
+            themeStyle: iconStyle,
+          },
+          {
+            x: item.x - Math.round(item.radius * 0.75),
+            y: item.y - Math.round(item.radius * 0.75),
+            width: Math.round(item.radius * 1.5),
+            height: Math.round(item.radius * 1.5),
+          },
+          rootBounds.x,
+          rootBounds.y,
+        )
+      : positioned(
+          {
+            type: 'text',
+            text: item.button.icon,
+            align: 'center',
+            baseline: 'middle',
+            themeStyle: iconStyle,
+          },
+          circle,
+          rootBounds.x,
+          rootBounds.y,
+        );
+    return [
+      positioned(
         {
-          x: hoveredBtn.x,
-          y: hoveredBtn.y,
-          radius: hoveredBtn.radius,
-          label: hoveredBtn.button.label,
+          type: 'fill',
+          shape: 'circle',
+          themeStyle: {
+            fillColor: isHovered
+              ? ui.theme.palette.hover.radialFill
+              : ui.theme.palette.overlay.scrimStrong,
+            strokeColor: isHovered
+              ? ui.theme.palette.border.ringHover
+              : ui.theme.palette.border.ring,
+            strokeWidth: 'regular',
+            strokeStyleOrder: 'widthFirst',
+          },
         },
-        theme,
-      );
-    }
+        circle,
+        rootBounds.x,
+        rootBounds.y,
+      ),
+      icon,
+    ];
+  });
+  ctx.save();
+  renderComposition(
+    layoutComposition({ type: 'stack', children }, rootBounds, ui),
+    ui,
+  );
+  if (hoveredButton) {
+    renderRadialTooltip(
+      ctx,
+      {
+        x: hoveredButton.x,
+        y: hoveredButton.y,
+        radius: hoveredButton.radius,
+        label: hoveredButton.button.label,
+      },
+      ui.theme,
+    );
   }
   ctx.restore();
 };
@@ -169,45 +300,29 @@ export const renderRadialMenu = (
 export const renderRadialTooltip = (
   ctx: CanvasRenderingContext2D,
   button: { x: number; y: number; radius: number; label: string },
-  theme: UiTheme,
+  theme: UiContext['theme'],
 ): void => {
-  const text = button.label;
-  if (!text) return;
-
-  ctx.save();
-  ctx.font = composeFont(
+  if (!button.label) return;
+  const ui: UiContext = {
+    ctx,
     theme,
-    theme.typography.sizes.md,
-    theme.typography.weights.regular,
-    theme.typography.families.compact,
+    mode: 'regular',
+    t: (key) => key,
+    measure: { width: () => 0 },
+    assets: { get: () => undefined },
+  };
+  ctx.save();
+  const bounds = getTooltipBounds(ctx, theme, button, false);
+  renderComposition(
+    layoutComposition(
+      {
+        type: 'stack',
+        children: tooltipNodes(button, bounds, bounds.x, bounds.y),
+      },
+      bounds,
+      ui,
+    ),
+    ui,
   );
-  const textMetrics =
-    typeof ctx.measureText === 'function'
-      ? ctx.measureText(text)
-      : { width: text.length * 7 };
-  const paddingX = 8;
-  const paddingY = 4;
-  const boxWidth = textMetrics.width + paddingX * 2;
-  const boxHeight = 20;
-
-  const boxX = button.x - boxWidth / 2;
-  const boxY = button.y - button.radius - boxHeight - paddingY;
-
-  ctx.fillStyle = theme.palette.overlay.tooltip;
-  ctx.strokeStyle = theme.palette.border.soft;
-  ctx.lineWidth = theme.shape.strokeWidth.thin;
-  ctx.beginPath();
-  if (typeof ctx.roundRect === 'function') {
-    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 4);
-  } else {
-    ctx.rect(boxX, boxY, boxWidth, boxHeight);
-  }
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = theme.palette.text.bright;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, button.x, boxY + boxHeight / 2);
   ctx.restore();
 };

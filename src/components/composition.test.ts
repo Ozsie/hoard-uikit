@@ -565,4 +565,41 @@ describe('composition', () => {
     expect(hitTestComposition(targetLayout, { x: 5, y: 5 })).toBeNull();
     expect(rec.log).toContain('fillText("⚔", 16, 16)');
   });
+
+  it('renders generic circles, asymmetric corners, and themed opacity', () => {
+    const rec = createRecordingContext();
+    const layout = layoutComposition(
+      {
+        type: 'stack',
+        opacity: 'dimmed',
+        children: [
+          {
+            type: 'fill',
+            shape: 'circle',
+            width: 20,
+            height: 20,
+            themeStyle: { overlay: 'scrimStrong', border: 'ring' },
+          },
+          {
+            type: 'fill',
+            shape: 'roundedRect',
+            width: 40,
+            height: 20,
+            offsetX: 24,
+            cornerRadii: [2, 8, 2, 8],
+            themeStyle: { surface: 'item', border: 'subtle' },
+          },
+        ],
+      },
+      { x: 0, y: 0, width: 80, height: 30 },
+      env,
+    );
+
+    renderComposition(layout, ui(rec.ctx));
+
+    expect(rec.log).toContain('globalAlpha=0.5');
+    expect(rec.log).toContain('arc(10, 15, 10, 0, 6.283185307179586)');
+    expect(rec.log).toContain('arcTo(64, 5, 64, 13, 8)');
+    expect(rec.log).toContain('arcTo(24, 5, 26, 5, 2)');
+  });
 });

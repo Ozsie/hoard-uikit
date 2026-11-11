@@ -137,6 +137,9 @@ fills, lines and hit-only nodes cover common drawing and semantic-hit
 needs. Sprite images can render fallback text when the asset is missing.
 `layoutComposition`, `hitTestComposition` and `renderComposition` share
 the recursive tree traversal; consumers still own state and dispatch.
+The shared `topBar`, `menu`, `welcome`, `settings`, and `radialMenu`
+components also use this model internally while keeping their public
+layout, hit-test and render contracts stable.
 
 ## The theme
 
@@ -191,6 +194,7 @@ types.
 | `welcome`                                                              | Header, button labels (Continue/Save only while a run is ongoing), footer, background asset id                            | button id (`continue`, `newGame`, `save`, `loadGame`, `settings`)                          |
 | `composition`                                                          | Generic row/column/stack/panel trees, controls, text, fills, dividers and images; state and actions remain consumer-owned | Consumer-supplied action ids                                                               |
 | `settings` / `credits`                                                 | Settings rows (toggle/slider/button kinds, values, dimmed flags), credits rows with urls                                  | `toggle`, `slider`, `button` (row id), `back`, `panel`, `backdrop`; credits: `row`, `back` |
+| `radialMenu`                                                           | Ring origin, button labels/icons, optional sprite refs                                                                    | `button` (button id)                                                                       |
 | Selection and step state that the consumer owns travels as composition |
 | data and render options, not package-held state; the consumer rebuilds |
 | the tree and handles semantic actions.                                 |

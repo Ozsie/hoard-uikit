@@ -4,16 +4,14 @@
 // carry every label, toggle state, slider value and dimmed flag
 // prebuilt by the game-side adapter; hits are semantic row ids.
 
-import type { Rect, UiTheme } from '@hoard-engine/primitives';
-import {
-  drawRoundedRect,
-  isPointInRect,
-  composeFont,
-} from '@hoard-engine/primitives';
-import { drawModalFrame, drawModalHeader } from '../kit/modalFrame';
-import { drawButton } from '../kit/button';
-import { drawListRow, listRowStyles } from '../kit/listRow';
+import type { Rect } from '@hoard-engine/primitives';
+import { isPointInRect } from '@hoard-engine/primitives';
 import type { UiContext } from '../env';
+import {
+  layoutComposition,
+  renderComposition,
+  type CompositionNode,
+} from './composition';
 
 export type SettingsRowKind = 'toggle' | 'slider' | 'button';
 
@@ -347,63 +345,131 @@ export const hitTestCredits = (
   return { kind: 'backdrop' };
 };
 
-const renderRowShell = (
-  ctx: CanvasRenderingContext2D,
-  bounds: Rect,
-  isHovered: boolean,
-  dimmed: boolean,
-  theme: UiTheme,
-): void => {
-  ctx.globalAlpha = dimmed ? theme.alpha.dimmed : 1;
-  drawListRow(
-    ctx,
-    bounds,
-    listRowStyles(theme, isHovered ? 'hover' : 'rest'),
-    ROW_RADIUS,
-  );
-};
+const positioned = (node: CompositionNode, bounds: Rect): CompositionNode => ({
+  ...node,
+  width: bounds.width,
+  height: bounds.height,
+  alignSelf: 'start',
+  justifySelf: 'start',
+  offsetX: bounds.x,
+  offsetY: bounds.y,
+});
 
-const renderRowLabel = (
-  ctx: CanvasRenderingContext2D,
+const rowNodes = (
   bounds: Rect,
   label: string,
+  hovered: boolean,
   dimmed: boolean,
-  theme: UiTheme,
-): void => {
-  ctx.font = composeFont(
-    theme,
-    theme.typography.sizes.lg,
-    theme.typography.weights.bold,
-  );
-  ctx.fillStyle = dimmed
-    ? theme.palette.text.muted
-    : theme.palette.text.dialogValue;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, bounds.x + 12, bounds.y + bounds.height / 2);
-};
+  slider?: SettingsSliderLayout,
+): CompositionNode => {
+  const children: CompositionNode[] = [
+    positioned(
+      {
+        type: 'fill',
+        shape: 'roundedRect',
+        themeStyle: {
+          surface: hovered ? 'rowHover' : 'row',
+          border: hovered ? 'rowHover' : 'row',
+          strokeWidth: 'thin',
+          radius: ROW_RADIUS,
+          shapeStyleOrder: 'styleFirst',
+        },
+      },
+      { x: 0, y: 0, width: bounds.width, height: bounds.height },
+    ),
+    positioned(
+      {
+        type: 'text',
+        text: label,
+        align: 'left',
+        baseline: 'middle',
+        themeStyle: {
+          text: dimmed ? 'muted' : 'dialogValue',
+          fontSize: 'lg',
+          fontWeight: 'bold',
+        },
+      },
+      { x: 12, y: 0, width: bounds.width - 12, height: bounds.height },
+    ),
+  ];
 
-const renderBackButton = (
-  ctx: CanvasRenderingContext2D,
-  bounds: Rect,
-  label: string,
-  isHovered: boolean,
-  theme: UiTheme,
-): void => {
-  drawButton(ctx, bounds, label, theme, {
-    variant: 'secondary',
-    hovered: isHovered,
-  });
-};
+  if (slider) {
+    const relative = (part: Rect): Rect => ({
+      x: part.x - bounds.x,
+      y: part.y - bounds.y,
+      width: part.width,
+      height: part.height,
+    });
+    children.push(
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface: 'input',
+            border: 'input',
+            strokeWidth: 'thin',
+            radius: 4,
+            shapeStyleOrder: 'styleFirst',
+          },
+        },
+        relative(slider.trackBounds),
+      ),
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface: 'sliderFill',
+            radius: 4,
+            shapeStyleOrder: 'styleFirst',
+          },
+        },
+        relative(slider.fillBounds),
+      ),
+      positioned(
+        {
+          type: 'fill',
+          shape: 'roundedRect',
+          themeStyle: {
+            surface: 'sliderHandle',
+            border: 'sliderHandle',
+            strokeWidth: 'thin',
+            radius: 4,
+            shapeStyleOrder: 'styleFirst',
+          },
+        },
+        relative(slider.handleBounds),
+      ),
+      positioned(
+        {
+          type: 'text',
+          text: slider.valueText,
+          align: 'right',
+          baseline: 'middle',
+          themeStyle: {
+            text: dimmed ? 'muted' : 'dialogValue',
+            fontSize: 'lg',
+            fontWeight: 'bold',
+          },
+        },
+        {
+          x: bounds.width - 12,
+          y: 0,
+          width: 0,
+          height: bounds.height,
+        },
+      ),
+    );
+  }
 
-const renderPanel = (
-  ctx: CanvasRenderingContext2D,
-  panel: Rect,
-  headerText: string,
-  theme: UiTheme,
-): void => {
-  drawModalFrame(ctx, panel, theme);
-  drawModalHeader(ctx, panel, headerText, theme);
+  return {
+    type: 'stack',
+    width: bounds.width,
+    height: bounds.height,
+    opacity: dimmed ? 'dimmed' : 'opaqueReset',
+    children,
+  };
 };
 
 export interface RenderSettingsOptions {
@@ -417,97 +483,54 @@ export const renderSettings = (
   options?: RenderSettingsOptions,
 ): void => {
   const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
   if (!ctx || !layout.hasContent) return;
-
+  const { panelBounds } = layout;
+  const children: CompositionNode[] = [
+    positioned(
+      {
+        type: 'panel',
+        title: layout.headerText,
+        children: [],
+      },
+      { x: 0, y: 0, width: panelBounds.width, height: panelBounds.height },
+    ),
+    ...layout.rows.map((row) =>
+      positioned(
+        rowNodes(
+          row.bounds,
+          row.label,
+          options?.hoveredRowId === row.id,
+          row.dimmed,
+          row.slider,
+        ),
+        {
+          x: row.bounds.x - panelBounds.x,
+          y: row.bounds.y - panelBounds.y,
+          width: row.bounds.width,
+          height: row.bounds.height,
+        },
+      ),
+    ),
+    positioned(
+      {
+        type: 'button',
+        actionId: 'back',
+        label: layout.backButtonLabel,
+        variant: 'secondary',
+      },
+      {
+        x: layout.backButtonBounds.x - panelBounds.x,
+        y: layout.backButtonBounds.y - panelBounds.y,
+        width: layout.backButtonBounds.width,
+        height: layout.backButtonBounds.height,
+      },
+    ),
+  ];
   ctx.save();
-  renderPanel(ctx, layout.panelBounds, layout.headerText, theme);
-
-  for (const row of layout.rows) {
-    const isHovered = options?.hoveredRowId === row.id;
-    renderRowShell(ctx, row.bounds, isHovered, row.dimmed, theme);
-    renderRowLabel(ctx, row.bounds, row.label, row.dimmed, theme);
-
-    if (row.kind === 'slider' && row.slider) {
-      const { trackBounds, fillBounds, handleBounds, valueText } = row.slider;
-      ctx.fillStyle = theme.palette.surface.input;
-      drawRoundedRect(
-        ctx,
-        trackBounds.x,
-        trackBounds.y,
-        trackBounds.width,
-        trackBounds.height,
-        4,
-      );
-      ctx.fill();
-      ctx.strokeStyle = theme.palette.border.input;
-      ctx.lineWidth = theme.shape.strokeWidth.thin;
-      drawRoundedRect(
-        ctx,
-        trackBounds.x,
-        trackBounds.y,
-        trackBounds.width,
-        trackBounds.height,
-        4,
-      );
-      ctx.stroke();
-      ctx.fillStyle = theme.palette.surface.sliderFill;
-      drawRoundedRect(
-        ctx,
-        fillBounds.x,
-        fillBounds.y,
-        fillBounds.width,
-        fillBounds.height,
-        4,
-      );
-      ctx.fill();
-      ctx.fillStyle = theme.palette.surface.sliderHandle;
-      drawRoundedRect(
-        ctx,
-        handleBounds.x,
-        handleBounds.y,
-        handleBounds.width,
-        handleBounds.height,
-        4,
-      );
-      ctx.fill();
-      ctx.strokeStyle = theme.palette.border.sliderHandle;
-      ctx.lineWidth = theme.shape.strokeWidth.thin;
-      drawRoundedRect(
-        ctx,
-        handleBounds.x,
-        handleBounds.y,
-        handleBounds.width,
-        handleBounds.height,
-        4,
-      );
-      ctx.stroke();
-
-      ctx.font = composeFont(
-        theme,
-        theme.typography.sizes.lg,
-        theme.typography.weights.bold,
-      );
-      ctx.fillStyle = row.dimmed
-        ? theme.palette.text.muted
-        : theme.palette.text.dialogValue;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(
-        valueText,
-        row.bounds.x + row.bounds.width - 12,
-        row.bounds.y + row.bounds.height / 2,
-      );
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  renderBackButton(
-    ctx,
-    layout.backButtonBounds,
-    layout.backButtonLabel,
-    Boolean(options?.hoveredBack),
-    theme,
+  renderComposition(
+    layoutComposition({ type: 'stack', children }, panelBounds, ui),
+    ui,
+    { hoveredActionId: options?.hoveredBack ? 'back' : null },
   );
   ctx.restore();
 };
@@ -523,24 +546,97 @@ export const renderCredits = (
   options?: RenderCreditsOptions,
 ): void => {
   const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
   if (!ctx || !layout.hasContent) return;
-
+  const { panelBounds } = layout;
+  const children: CompositionNode[] = [
+    positioned(
+      {
+        type: 'panel',
+        title: layout.headerText,
+        children: [],
+      },
+      { x: 0, y: 0, width: panelBounds.width, height: panelBounds.height },
+    ),
+    ...layout.rows.flatMap((row) => {
+      const bounds = {
+        x: row.bounds.x - panelBounds.x,
+        y: row.bounds.y - panelBounds.y,
+        width: row.bounds.width,
+        height: row.bounds.height,
+      };
+      const hovered = options?.hoveredRowId === row.id;
+      return [
+        positioned(
+          {
+            type: 'stack',
+            opacity: 'opaque',
+            children: [
+              positioned(
+                {
+                  type: 'fill',
+                  shape: 'roundedRect',
+                  themeStyle: {
+                    surface: hovered ? 'rowHover' : 'row',
+                    border: hovered ? 'rowHover' : 'row',
+                    strokeWidth: 'thin',
+                    radius: ROW_RADIUS,
+                    shapeStyleOrder: 'styleFirst',
+                  },
+                },
+                {
+                  x: 0,
+                  y: 0,
+                  width: row.bounds.width,
+                  height: row.bounds.height,
+                },
+              ),
+              positioned(
+                {
+                  type: 'text',
+                  text: row.label,
+                  align: 'left',
+                  baseline: 'middle',
+                  themeStyle: {
+                    text: 'dialogValue',
+                    fontSize: 'lg',
+                    fontWeight: 'bold',
+                  },
+                },
+                {
+                  x: 12,
+                  y: 0,
+                  width: row.bounds.width - 12,
+                  height: row.bounds.height,
+                },
+              ),
+            ],
+          },
+          bounds,
+        ),
+      ];
+    }),
+    positioned(
+      {
+        type: 'button',
+        actionId: 'back',
+        label: layout.backButtonLabel,
+        variant: 'secondary',
+      },
+      {
+        x: layout.backButtonBounds.x - panelBounds.x,
+        y: layout.backButtonBounds.y - panelBounds.y,
+        width: layout.backButtonBounds.width,
+        height: layout.backButtonBounds.height,
+      },
+    ),
+  ];
   ctx.save();
-  renderPanel(ctx, layout.panelBounds, layout.headerText, theme);
-
-  for (const row of layout.rows) {
-    const isHovered = options?.hoveredRowId === row.id;
-    renderRowShell(ctx, row.bounds, isHovered, false, theme);
-    renderRowLabel(ctx, row.bounds, row.label, false, theme);
-  }
-
-  renderBackButton(
-    ctx,
-    layout.backButtonBounds,
-    layout.backButtonLabel,
-    Boolean(options?.hoveredBack),
-    theme,
+  renderComposition(
+    layoutComposition({ type: 'stack', children }, panelBounds, ui),
+    ui,
+    {
+      hoveredActionId: options?.hoveredBack ? 'back' : null,
+    },
   );
   ctx.restore();
 };

@@ -4,13 +4,14 @@
 // (item ids are semantic); layout is canvas-free; the item rows use the
 // asymmetric button shape the menu has always drawn.
 
-import type { Rect, UiTheme } from '@hoard-engine/primitives';
-import {
-  roundRectPath,
-  isPointInRect,
-  composeFont,
-} from '@hoard-engine/primitives';
+import type { Rect } from '@hoard-engine/primitives';
+import { isPointInRect } from '@hoard-engine/primitives';
 import type { UiContext } from '../env';
+import {
+  layoutComposition,
+  renderComposition,
+  type CompositionNode,
+} from './composition';
 
 export interface MenuItemVm {
   /** Hit-test identity: the menu item's id. */
@@ -153,31 +154,6 @@ export const hitTestMenu = (
   return { kind: 'backdrop' };
 };
 
-// The asymmetric menu-item shape: top-right and bottom-left corners are
-// strongly rounded, the others slightly.
-const drawMenuButtonShape = (
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  rTR = 8,
-  rBL = 8,
-  rOther = 2,
-): void => {
-  ctx.beginPath();
-  ctx.moveTo(x + rOther, y);
-  ctx.lineTo(x + w - rTR, y);
-  ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
-  ctx.lineTo(x + w, y + h - rOther);
-  ctx.arcTo(x + w, y + h, x + w - rOther, y + h, rOther);
-  ctx.lineTo(x + rBL, y + h);
-  ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
-  ctx.lineTo(x, y + rOther);
-  ctx.arcTo(x, y, x + rOther, y, rOther);
-  ctx.closePath();
-};
-
 export interface RenderMenuOptions {
   readonly hoveredItemId?: string | null;
 }
@@ -188,95 +164,115 @@ export const renderMenu = (
   options?: RenderMenuOptions,
 ): void => {
   const { ctx } = ui;
-  const theme: UiTheme = ui.theme;
   if (!ctx || layout.panelBounds.width === 0 || layout.panelBounds.height === 0)
     return;
 
+  const positioned = (
+    node: CompositionNode,
+    bounds: Rect,
+  ): CompositionNode => ({
+    ...node,
+    width: bounds.width,
+    height: bounds.height,
+    alignSelf: 'start',
+    justifySelf: 'start',
+    offsetX: bounds.x,
+    offsetY: bounds.y,
+  });
+  const children: CompositionNode[] = [
+    positioned(
+      {
+        type: 'fill',
+        themeStyle: { overlay: 'scrim' },
+      },
+      layout.backdropBounds,
+    ),
+    positioned(
+      {
+        type: 'fill',
+        shape: 'roundedRect',
+        themeStyle: {
+          surface: 'panelMenu',
+          border: 'subtle',
+          strokeWidth: 'thin',
+          radius: 6,
+          roundedRectMode: 'native',
+        },
+      },
+      layout.panelBounds,
+    ),
+    positioned(
+      {
+        type: 'text',
+        text: layout.headerBounds.text,
+        align: 'center',
+        baseline: 'middle',
+        themeStyle: {
+          text: 'strong',
+          fontSize: 'xxl',
+          fontWeight: 'bold',
+          fontFamily: 'plain',
+        },
+      },
+      {
+        ...layout.headerBounds,
+        y: layout.headerBounds.y - 2,
+      },
+    ),
+    ...layout.items.flatMap((itemLayout) => {
+      const hovered = options?.hoveredItemId === itemLayout.item.id;
+      return [
+        positioned(
+          {
+            type: 'fill',
+            shape: 'roundedRect',
+            cornerRadii: [2, 8, 2, 8],
+            themeStyle: {
+              surface: hovered ? 'itemHover' : 'item',
+              border: hovered ? 'soft' : 'subtle',
+              strokeWidth: 'thin',
+              roundedRectMode: 'native',
+            },
+          },
+          itemLayout.bounds,
+        ),
+        positioned(
+          {
+            type: 'text',
+            text: itemLayout.item.label,
+            align: 'center',
+            baseline: 'middle',
+            themeStyle: {
+              text: hovered ? 'bright' : 'body',
+              fontSize: 'lg',
+              fontFamily: 'plain',
+            },
+          },
+          itemLayout.bounds,
+        ),
+      ];
+    }),
+    ...(layout.footerBounds
+      ? [
+          positioned(
+            {
+              type: 'text',
+              text: layout.footerBounds.text,
+              role: 'footer',
+              align: 'center',
+              baseline: 'middle',
+              themeStyle: { fontFamily: 'plain' },
+            },
+            layout.footerBounds,
+          ),
+        ]
+      : []),
+  ];
+  const bounds = layout.backdropBounds;
   ctx.save();
-
-  // 1. Semi-transparent backdrop
-  const backdrop = layout.backdropBounds;
-  ctx.fillStyle = theme.palette.overlay.scrim;
-  ctx.fillRect(backdrop.x, backdrop.y, backdrop.width, backdrop.height);
-
-  // 2. Menu Panel
-  const panel = layout.panelBounds;
-  roundRectPath(ctx, panel.x, panel.y, panel.width, panel.height, 6);
-  ctx.fillStyle = theme.palette.surface.panelMenu;
-  ctx.fill();
-  ctx.strokeStyle = theme.palette.border.subtle;
-  ctx.lineWidth = theme.shape.strokeWidth.thin;
-  ctx.stroke();
-
-  // 3. Header Text
-  const header = layout.headerBounds;
-  ctx.font = composeFont(
-    theme,
-    theme.typography.sizes.xxl,
-    theme.typography.weights.bold,
-    theme.typography.families.plain,
+  renderComposition(
+    layoutComposition({ type: 'stack', children }, bounds, ui),
+    ui,
   );
-  ctx.fillStyle = theme.palette.text.strong;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(
-    header.text,
-    header.x + header.width / 2,
-    header.y + header.height / 2 - 2,
-  );
-
-  // 4. Menu Items
-  for (const itemLayout of layout.items) {
-    const isHovered = options?.hoveredItemId === itemLayout.item.id;
-    const bounds = itemLayout.bounds;
-
-    drawMenuButtonShape(ctx, bounds.x, bounds.y, bounds.width, bounds.height);
-    ctx.fillStyle = isHovered
-      ? theme.palette.surface.itemHover
-      : theme.palette.surface.item;
-    ctx.fill();
-    ctx.strokeStyle = isHovered
-      ? theme.palette.border.soft
-      : theme.palette.border.subtle;
-    ctx.lineWidth = theme.shape.strokeWidth.thin;
-    ctx.stroke();
-
-    ctx.font = composeFont(
-      theme,
-      theme.typography.sizes.lg,
-      theme.typography.weights.regular,
-      theme.typography.families.plain,
-    );
-    ctx.fillStyle = isHovered
-      ? theme.palette.text.bright
-      : theme.palette.text.body;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      itemLayout.item.label,
-      bounds.x + bounds.width / 2,
-      bounds.y + bounds.height / 2,
-    );
-  }
-
-  // 5. Footer Text (build info)
-  if (layout.footerBounds) {
-    const footer = layout.footerBounds;
-    ctx.font = composeFont(
-      theme,
-      theme.typography.sizes.xxs,
-      theme.typography.weights.regular,
-      theme.typography.families.plain,
-    );
-    ctx.fillStyle = theme.palette.text.faint;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(
-      footer.text,
-      footer.x + footer.width / 2,
-      footer.y + footer.height / 2,
-    );
-  }
-
   ctx.restore();
 };

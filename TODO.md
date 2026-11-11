@@ -19,8 +19,8 @@ flows, plus shared UI patterns: modal panels, buttons, rows, checkboxes,
 text inputs, text, images and status meters. The game inventory identified
 hero/monster cards and status, hero selection, dungeon intro, event/diary
 panels, and between-dungeons as game-concept-shaped; the ten named screens
-are now composed in the game. The radial menu remains in UIKit because it
-was not part of this migration request.
+are now composed in the game. The radial menu remains a shared UIKit
+component and now also renders through the generic composition model.
 The existing button, list-row, modal-frame and text-input widgets already
 serve multiple screens in the game; sprite frames are shared by inventory
 and radial-menu art.
@@ -80,6 +80,36 @@ controller effects. The user approved updating snapshots after reviewing
 composition differences as intentional; verify geometry and semantics with
 facade tests and update only the reviewed entries.
 
+## Remaining shared components: composition migration map
+
+The follow-up request keeps the five remaining public components in UIKit
+and requires their renderers to use the composition interpreter while
+preserving their public contracts, layout, semantic hits and existing
+rendering. Consumer call sites continue to use their existing facade APIs.
+
+| Component    | Consumer facade and live use                                                                                                                                                                                | Existing regression gates                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `topBar`     | `src/ui/TopBarRendering.ts`; adapted by `src/ui/viewmodels/topBar.ts`; live controller renders and routes menu/debug/log hits.                                                                              | `TopBarRendering.test.ts`; regular, compact and Swedish canvas snapshots.                                                        |
+| `menu`       | `src/ui/DebugMenuRendering.ts`; adapted by `src/ui/viewmodels/debugMenu.ts`; debug menu items dispatch game callbacks and backdrop closes it.                                                               | `DebugMenuRendering.test.ts`; debug-view canvas snapshot.                                                                        |
+| `welcome`    | `src/ui/WelcomeRendering.ts`; adapted by `src/ui/viewmodels/welcome.ts`; live controller still uses the existing facade. `WelcomeComposition.ts` is a separate tested pilot, not yet wired into production. | `WelcomeRendering.test.ts`, `WelcomeComposition.test.ts`; fresh and ongoing snapshots plus a composition-vs-renderer comparison. |
+| `settings`   | `src/ui/SettingsRendering.ts`; adapted by `src/ui/viewmodels/settings.ts`; controller routes row/back/slider behavior.                                                                                      | `SettingsRendering.test.ts`; settings and credits canvas snapshots.                                                              |
+| `radialMenu` | `src/ui/RadialMenuRendering.ts`; adapted by `src/ui/viewmodels/radialMenu.ts`; controller handles world/screen transforms and action dispatch.                                                              | `RadialMenuRendering.test.ts`; radial-menu canvas snapshot.                                                                      |
+
+The UIKit `independence.test.ts` currently provides only a smoke test for each
+component; detailed layout/hit assertions and canvas-log snapshots live in the
+consumer. The composition API already covers positioned/stacked nodes,
+themed fills, text, buttons, images/sprites, clipping and semantic hit targets.
+The initial source review identified two concrete generic visual gaps to
+validate during implementation: circular visuals for radial buttons and
+asymmetric per-corner rounding for debug-menu items. Do not change snapshots
+or hit geometry unless separately approved.
+
+The five renderers now construct composition trees internally. Existing
+consumer facades, public layout/hit APIs, and semantic identities remain
+unchanged. All 19 consumer parity tests and 76 component facade tests pass
+with the pinned snapshots unchanged; UIKit composition tests cover the added
+circle, asymmetric-corner, opacity, text-order, and rounded-path capabilities.
+
 ### Composition gaps to close before porting
 
 The current DSL already offers row/column/stack/panel containers, generic
@@ -111,6 +141,11 @@ arbitrary consumer render callbacks or game-domain types.
    updated only to remove invisible empty-label draw calls.
 8. Remove their UIKit source modules/exports, update docs, and verify both
    repositories against the reviewed consumer snapshots. **Done.**
+9. Map remaining UIKit shared components and consumer parity gates. **Done.**
+10. Reimplement `topBar`, `menu`, `welcome`, `settings`, and `radialMenu`
+    with composition while preserving their contracts and rendering. **Done.**
+11. Verify both repositories and document composition adoption. **Done:** all
+    pinned parity snapshots remain unchanged.
 
 Preserve the generic three-function component contracts, semantic action
 identifiers, theme token usage and the `@hoard-engine/primitives`

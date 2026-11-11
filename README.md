@@ -152,12 +152,16 @@ Welcome surface/vignette with `fallback: 'welcome'`.
 
 This is an additive API on the package root, not a deep import or a new
 subpath. The game-side `Welcome` pilot compares geometry, semantic hits,
-assets and rendering while leaving `renderWelcome` unchanged. The ten
+assets and rendering. UIKit's `topBar`, `menu`, `welcome`, `settings`, and
+`radialMenu` renderers now also build composition trees internally while
+keeping their existing public layout, hit-test, and render APIs. The ten
 game-shaped screens (`heroCards`, `heroStatus`, `monsterCards`,
 `dungeonIntro`, `saveLoadDialog`, `newGameDialog`, `heroSelection`,
 `eventCard`, `diary`, and `betweenDungeons`) are now composed in
 `drakriddarna`; their UIKit screen modules and exports have been removed.
-The game owns their state adapters, strings, assets and action dispatch.
+The game owns their state adapters, strings, assets and action dispatch;
+the remaining shared-screen compositions stay in UIKit and use its generic
+theme, translator, and asset ports.
 
 ## API
 
