@@ -16,7 +16,7 @@ src/
   index.ts                   // the public surface — consume this
   env.ts                     // UiEnv / UiContext contracts + shared constants
   kit/                       // widgets: modalFrame, button, listRow, textInput, spriteFrame
-  components/                // the 14 full components (cards, panels, dialogs, menus)
+  components/                // shared screens/components and the generic composition DSL
   testing/                   // the test harness: recordingContext, sentinels, literalBudget
                              // (published as the './testing' subpath export)
 ```
@@ -38,6 +38,13 @@ export, that is a missing surface — add it there deliberately rather
 than deep-importing. A completeness test (`src/publicSurface.test.ts`)
 fails when a source module is missing from the surface. The test
 harness lives behind the `./testing` subpath export.
+
+The game-shaped `heroCards`, `heroStatus`, `monsterCards`, `dungeonIntro`,
+`saveLoadDialog`, `newGameDialog`, `heroSelection`, `eventCard`, `diary`,
+and `betweenDungeons` renderers are owned by `drakriddarna` and are not
+part of this package's source or public exports. The consumer composes
+them from the generic DSL; game state, translated strings, assets and
+action dispatch remain consumer-owned.
 
 ## Boundary
 
@@ -121,6 +128,16 @@ square frames on a sheet). `drawSpriteFrame` (`src/kit/spriteFrame.ts`)
 resolves the sheet through the asset port and returns `false` while it
 loads, so callers draw their icon fallback.
 
+## Composition DSL
+
+`CompositionNode` is the package's generic, data-only composition API.
+Rows, columns and stacks arrange shared layout primitives; panels add
+themed chrome. Text supports measured wrapping, clipping and decoration;
+fills, lines and hit-only nodes cover common drawing and semantic-hit
+needs. Sprite images can render fallback text when the asset is missing.
+`layoutComposition`, `hitTestComposition` and `renderComposition` share
+the recursive tree traversal; consumers still own state and dispatch.
+
 ## The theme
 
 `UiTheme` (with the defaults in `defaultTheme` and the deep-merge
@@ -162,42 +179,30 @@ through the kit index); the kit widgets are the kit's own:
 
 ## View model reference
 
-Every component's view model is defined next to the component and
+Every remaining screen component's view model is defined next to it and
 re-exported through the index; this is the consumer-facing summary. All
 fields are readonly strings, numbers or nested view models — no consumer
 types.
 
-| Component              | View model carries                                                                                                                                                                                                                                    | Semantic hits                                                                                 |
-| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------- |
-| `topBar`               | Menu/debug labels, turn/score/timer texts, compact width reservations, log entries                                                                                                                                                                    | `'menu'`, `'debug'`, `'log'`, `'turn'`, `'logDropdown'`                                       |
-| `heroCards`            | Party cards: title, HP/equipment texts, actor colour, current/target flags, inventory (backpack) button icon                                                                                                                                          | `inventoryButton`, `card` (hero id)                                                           |
-| `heroStatus`           | One hero's status screen: header, equipment slots (weapon/armour/shield) with item texts and sprite refs, inventory grid items, selected-item detail (name/effect/description, use/used state and labels), stat boxes (value/max), status-effect rows | `slot` (slot id), `item` (item index), `use`, `close`, `panel`, `backdrop`                    |
-| `monsterCards`         | Visible monsters: title, HP, weapon/armour/shield texts, ranged flag, actor colour                                                                                                                                                                    | `card` (card id)                                                                              |
-| `radialMenu`           | Ring origin (grid coords), buttons with label, icon, sprite ref                                                                                                                                                                                       | `button` (button index)                                                                       |
-| `dungeonIntro`         | Title, intro text, close label                                                                                                                                                                                                                        | `close`, `panel`, `backdrop`                                                                  |
-| `menu`                 | View name, header, item labels, footer (the originating game routes its debug menu through it)                                                                                                                                                        | `item` (item id), `panel`, `backdrop`                                                         |
-| `welcome`              | Header, button labels (Continue/Save only while a run is ongoing), footer, background asset id                                                                                                                                                        | button id (`continue`, `newGame`, `save`, `loadGame`, `settings`)                             |
-| `saveLoadDialog`       | Mode, title/subtitle, save rows, button labels                                                                                                                                                                                                        | `row`, `action`, `secondary`, `input`, `panel`, `backdrop`                                    |
-| `newGameDialog`        | Titles, campaign/game-master rows, checkbox and seed labels, button labels                                                                                                                                                                            | `campaign`, `gameMaster`, `checkbox`, `seedInput`, `action`, `secondary`, `panel`, `backdrop` |
-| `heroSelection`        | Header, roster (ids, default names, colours), party limits, button labels                                                                                                                                                                             | `checkbox`, `nameInput`, `row` (hero id), `start`, `back`, `panel`, `backdrop`                |
-| `settings` / `credits` | Settings rows (toggle/slider/button kinds, values, dimmed flags), credits rows with urls                                                                                                                                                              | `toggle`, `slider`, `button` (row id), `back`, `panel`, `backdrop`; credits: `row`, `back`    |
-| `eventCard`            | Deck summary, active event texts, drawn-event titles                                                                                                                                                                                                  | `toggle`, `card`                                                                              |
-| `diary`                | Diary header, win-condition texts with fulfilled flags, found notes                                                                                                                                                                                   | `panel`, `toggle`                                                                             |
-| `betweenDungeons`      | Step (`levelUp`/`trade`/`campaignComplete`/`partyWipe`), title/subtitle, score texts, campaign statistics, wipe choices, ranked high scores, hero sections with tradable items, actor colour keys                                                     | `actionButton`, `secondaryButton`, `item`, `giveItem`, `wipeButton`, `panel`, `backdrop`      |
-
-Selection and step state that the consumer owns (selected trade item,
-speedrun mode, hovered rows) travels as layout/render **options**, not
-view-model data; a view model plus options is a complete render input.
+| Component                                                              | View model carries                                                                                                        | Semantic hits                                                                              |
+| :--------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------- |
+| `topBar`                                                               | Menu/debug labels, turn/score/timer texts, compact width reservations, log entries                                        | `'menu'`, `'debug'`, `'log'`, `'turn'`, `'logDropdown'`                                    |
+| `menu`                                                                 | View name, header, item labels, footer (the originating game routes its debug menu through it)                            | `item` (item id), `panel`, `backdrop`                                                      |
+| `welcome`                                                              | Header, button labels (Continue/Save only while a run is ongoing), footer, background asset id                            | button id (`continue`, `newGame`, `save`, `loadGame`, `settings`)                          |
+| `composition`                                                          | Generic row/column/stack/panel trees, controls, text, fills, dividers and images; state and actions remain consumer-owned | Consumer-supplied action ids                                                               |
+| `settings` / `credits`                                                 | Settings rows (toggle/slider/button kinds, values, dimmed flags), credits rows with urls                                  | `toggle`, `slider`, `button` (row id), `back`, `panel`, `backdrop`; credits: `row`, `back` |
+| Selection and step state that the consumer owns travels as composition |
+| data and render options, not package-held state; the consumer rebuilds |
+| the tree and handles semantic actions.                                 |
 
 ## Testing the kit
 
 The test harness lives behind the `./testing` subpath export:
 `createRecordingContext` (a deterministic call-log stand-in for the
 canvas context), `createSentinelTheme`, and the style-literal counter.
-The parity snapshots in the originating game repo pin its pixels: a
-refactor that only moves code must reproduce the recorded call logs
-byte-identically. `src/components/independence.test.ts` here drives
-every component with hand-built view models alone — the kit is usable
+The originating game repo owns parity snapshots for its screen adapters.
+`src/components/independence.test.ts` here drives every remaining shared
+screen component with hand-built view models alone — the kit is usable
 without any game.
 
 ## The published package

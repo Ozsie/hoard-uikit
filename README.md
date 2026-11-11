@@ -2,8 +2,9 @@
 
 Theme-driven canvas UI chrome for the HOARD engine: the layout/hit
 testing/rendering contract for view-model-driven components, five kit
-widgets (modal frame, button, list row, text input, sprite frame), 14
-full components (cards, panels, dialogs, menus), the `UiEnv`/`UiContext`
+widgets (modal frame, button, list row, text input, sprite frame), shared
+screen components (top bar, menu, welcome, settings, credits, radial menu),
+an opt-in generic composition DSL, the `UiEnv`/`UiContext`
 environment contracts, and the test harness subpath (recording context,
 sentinel theme, literal budget). Everything it draws streams from the
 theme tokens and translator/assets ports — a single deliberate
@@ -93,6 +94,71 @@ measure, the canvas context, the asset provider (`AssetId` → loaded
 image) and every view model; hit results come back as semantic ids for
 the consumer to map onto its entities.
 
+## Composition DSL
+
+Use the composition API when a screen is best described as generic
+containers and controls rather than one of the existing shared screen
+components. `CompositionNode` is a data-only tree: `row` and `column`
+arrange children, `stack` layers them, and `panel` adds themed chrome.
+Leaves include `spacer`, `text`, `fill`, `line`, `hitTarget`, `button`,
+`checkbox`, `textInput`, `image`, and `meter`.
+
+```ts
+import {
+  hitTestComposition,
+  layoutComposition,
+  renderComposition,
+} from '@hoard-engine/uikit';
+import type { CompositionNode } from '@hoard-engine/uikit';
+
+const tree: CompositionNode = {
+  type: 'column',
+  gap: 12,
+  padding: 16,
+  children: [
+    { type: 'text', text: title, role: 'heading' },
+    {
+      type: 'button',
+      actionId: 'start',
+      label: startLabel,
+      variant: 'primary',
+    },
+    {
+      type: 'checkbox',
+      actionId: 'sound',
+      label: soundLabel,
+      checked: soundEnabled,
+    },
+    { type: 'textInput', actionId: 'name', value: playerName },
+    { type: 'meter', value: health, max: maxHealth, label: healthLabel },
+  ],
+};
+
+const layout = layoutComposition(tree, view, env);
+const hit = hitTestComposition(layout, { x: pointer.x, y: pointer.y });
+if (hit) dispatchAction(hit); // the consumer owns state and behavior
+renderComposition(layout, { ...env, ctx, assets }, { hoveredActionId });
+```
+
+The tree contains only consumer-provided values. Text is already
+translated, `actionId` values are returned by `hitTestComposition`, and
+the consumer rebuilds the tree from its own state; the DSL stores no
+state or callbacks. Nodes support theme-token styling, image replacement,
+sprite frames with fallback text, wrapping/clipping, strike-through,
+offset positioning, and hit-only regions. An `imageOverride` replaces a
+node's visual when available without changing its bounds or hits. Image
+nodes use the themed surface fallback by default and can request the
+Welcome surface/vignette with `fallback: 'welcome'`.
+
+This is an additive API on the package root, not a deep import or a new
+subpath. The game-side `Welcome` pilot compares geometry, semantic hits,
+assets and rendering while leaving `renderWelcome` unchanged. The ten
+game-shaped screens (`heroCards`, `heroStatus`, `monsterCards`,
+`dungeonIntro`, `saveLoadDialog`, `newGameDialog`, `heroSelection`,
+`eventCard`, `diary`, and `betweenDungeons`) are now composed in
+`drakriddarna`; their UIKit screen modules and exports have been removed.
+The game owns their state adapters, strings, assets and action dispatch.
+
 ## API
 
 The index re-exports the full `@hoard-engine/primitives` surface
@@ -117,39 +183,21 @@ geometry; see that package's README for their semantics.
 | `drawSpriteFrame` / `spriteSourceRect`                                                      | The sprite-frame widget: resolves a `SpriteRef` through the asset port (returns `false` while loading, so the caller draws its fallback) and computes the sheet sub-rectangle     |
 | `TEXT_INPUT_INSET` / `TEXT_INPUT_RADIUS` / `DrawTextInputOptions`                            | The text-input widget's dimension constants and draw options                                                                                                                    |
 | `drawTextInput` / `clampTextInput` / `applyTextInputKey`                                    | The text-input widget: draws the field, clamps a value to the maxLength, applies a key press (`value`, cursor and caret movement rules)                                          |
+| `CompositionNode` / `CompositionLayoutNode` / `CompositionHit` / `CompositionRenderOptions` | The opt-in data tree, laid-out nodes, semantic action hits and render-time hover/focus options                                                                       |
+| `CompositionFill` / `CompositionLine` / `CompositionHitTarget` / `CompositionThemeStyle` | Data-only fills, dividers, invisible semantic regions, and theme-token styling for composition nodes                                                               |
+| `CompositionImageOverride` / `CompositionImageFit` / `CompositionAlign` / `CompositionJustify` / `CompositionPosition` | Image replacement behavior and layout sizing/alignment choices for composition nodes                                                                       |
+| `layoutComposition` / `hitTestComposition` / `renderComposition`                            | Shared recursive layout, topmost semantic hit testing and layered drawing for generic rows, columns, stacks, panels and controls                                      |
 | `TopBarViewModel`                                                                           | The top bar data: menu/debug labels, turn/score/timer texts, compact width reservations, log entries                                                                        |
 | `TopBarLayoutOptions` / `TopBarElementBounds` / `TopBarLayout` / `layoutTopBar`              | The top bar geometry: layout options, per-element bounds, pure layout over the view bounds and env                                                                          |
 | `renderTopBar` / `RenderTopBarOptions` / `hitTestTopBar` / `TopBarHitElement`                 | Draws the top bar; semantic hits: `'menu'`, `'debug'`, `'log'`, `'logDropdown'`, `'turn'`                                                                                      |
-| `HeroCardsViewModel` / `HeroCardVm` / `HeroInventoryVm` / `HeroInventoryItemVm`             | The party card stack: hero cards and the open inventory rows (use-button state, sprite refs, use/used labels)                                                                    |
-| `HeroCardsLayout` / `HeroCardLayoutItem` / `HeroInventoryLayout` / `HeroInventoryItemLayout` | The card-stack geometry: per-card and per-row bounds, computed by `layoutHeroCards`                                                                                          |
-| `renderHeroCards` / `RenderHeroCardsOptions` / `hitTestHeroCards` / `HeroCardsHit` / `HeroCardSpriteRef` | Draws the cards; semantic hits: `card`, `inventory`, `inventoryButton`, `inventoryClose`, `inventoryUseItem` (hero id + item index)                                      |
-| `MonsterCardsViewModel` / `MonsterCardsLayout` / `MonsterCardLayoutItem`                      | The monster cards: visible monsters with HP, weapon/armour/shield texts, ranged flag, actor colour; per-card layout via `layoutMonsterCards`                                   |
-| `renderMonsterCards` / `RenderMonsterCardsOptions` / `hitTestMonsterCards` / `MonsterCardsHit` | Draws the monster cards; semantic hits: `card` (card id)                                                                                                                       |
-| `DungeonIntroViewModel` / `DungeonIntroLayout`                                              | The dungeon intro panel: title, intro text, close label, and its layout (`layoutDungeonIntro`, `emptyDungeonIntroLayout`)                                                       |
-| `renderDungeonIntro` / `RenderDungeonIntroOptions` / `hitTestDungeonIntro` / `DungeonIntroHit` | Draws the intro; semantic hits: `close`, `panel`, `backdrop`                                                                                                                   |
 | `MenuViewModel` / `MenuItemVm` / `MenuLayout` / `MenuItemLayout`                              | A generic menu (the originating game routes its debug menu through it): header, items, footer; layout via `layoutMenu`                                                          |
 | `renderMenu` / `RenderMenuOptions` / `hitTestMenu` / `MenuHit`                              | Draws the menu; semantic hits: `item` (item id), `panel`, `backdrop`                                                                                                           |
 | `WelcomeViewModel` / `WelcomeButtonVm` / `WelcomeLayout` / `WelcomeButtonLayout`            | The welcome screen: header, buttons (Continue/Save only while a run is ongoing), footer, background asset id                                                                    |
 | `layoutWelcome` / `renderWelcome` / `renderWelcomeBackground` / `renderWelcomeFooter` / `getCoverFitBounds` / `RenderWelcomeOptions` / `hitTestWelcome` / `WelcomeHit` | Layout, render (whole, or background and footer layers separately), the cover-fit background bounds computation, render options (hover, background override), hit test over button ids — hits are the button ids themselves |
-| `SaveLoadDialogMode` / `SaveLoadDialogViewModel` / `SaveLoadDialogRowVm` / `SaveLoadDialogMode`-owned modes | The save/load dialog: mode, title/subtitle, save rows, button labels; rows and their layout (`layoutSaveLoadDialog`, `SaveLoadDialogLayout`, `SaveLoadDialogRowLayout`, `emptySaveLoadDialogLayout`) |
-| `renderSaveLoadDialog` / `RenderSaveLoadDialogOptions` / `hitTestSaveLoadDialog` / `SaveLoadDialogHit` | Draws the dialog; semantic hits: `row`, `action`, `secondary`, `input`, `panel`, `backdrop`                                                                                   |
-| `NewGameDialogViewModel` / `NewGameDialogRowVm` / `NewGameDialogLayout` / `NewGameDialogRowLayout` | The new-game dialog: titles, campaign/game-master rows, checkbox and seed labels, button labels (`layoutNewGameDialog`, `emptyNewGameDialogLayout`)                             |
-| `renderNewGameDialog` / `RenderNewGameDialogOptions` / `hitTestNewGameDialog` / `NewGameDialogHit` | Draws the dialog; semantic hits: `campaign`, `gameMaster`, `checkbox`, `seedInput`, `action`, `secondary`, `panel`, `backdrop`                                                  |
-| `HeroSelectionViewModel` / `HeroSelectionRowVm` / `HeroSelectionLayout` / `HeroSelectionRowLayout` | The hero selection: roster (ids, default names, colours), party limits, button labels (`layoutHeroSelection`, `emptyHeroSelectionLayout`)                                     |
-| `renderHeroSelection` / `RenderHeroSelectionOptions` / `hitTestHeroSelection` / `HeroSelectionHit` | Draws the selection; semantic hits: `checkbox`, `nameInput`, `row` (hero id), `start`, `back`, `panel`, `backdrop`                                                              |
 | `SettingsViewModel` / `SettingsRowVm` / `SettingsRowKind` / `SettingsLayout` / `SettingsRowLayout` / `SettingsSliderLayout` | The settings panel: toggle/slider/button rows with values and dimmed flags; slider geometry for hit mapping (`layoutSettings`)                                                |
 | `renderSettings` / `RenderSettingsOptions` / `hitTestSettings` / `SettingsHit` / `getSliderValueFromX` | Draws settings (and maps a pointer x to a slider value); semantic hits: `toggle`, `slider`, `button` (row id), `back`, `panel`, `backdrop`                                    |
 | `CreditsViewModel` / `CreditsRowVm` / `CreditsLayout` / `CreditsRowLayout`                   | The credits panel: rows with urls (`layoutCredits`)                                                                                                                            |
 | `renderCredits` / `RenderCreditsOptions` / `hitTestCredits` / `CreditsHit`                   | Draws the credits; semantic hits: `row`, `back`                                                                                                                                |
-| `EventCardViewModel` / `EventDeckSummaryVm` / `ActiveEventVm` / `DrawnEventVm`               | The event card: deck summary, active event texts, drawn-event titles                                                                                                           |
-| `EventCardLayoutOptions` / `EventCardLayout` / `ActiveEventLayout` / `DrawnEventItemLayout` / `layoutEventCard` / `emptyEventCardLayout` | The event card geometry: the active event, the deck list and the toggle — several components export an `empty<Name>Layout` so an absent layout can be hit-tested without a canvas |
-| `renderEventCard` / `RenderEventCardOptions` / `hitTestEventCard` / `EventCardHit`           | Draws the event card; semantic hits: `toggle`, `card`                                                                                                                          |
-| `DiaryViewModel` / `WinConditionItemVm` / `DiaryNoteItemVm` / `DiaryNoteItemLayout` / `WinConditionItemLayout` | The diary panel: header, win-condition texts with fulfilled flags, found notes; layout options and geometry over both sections (`layoutDiary`, `DiaryLayout`, `DiaryLayoutOptions`, `emptyDiaryLayout`) |
-| `renderDiary` / `RenderDiaryOptions` / `hitTestDiary` / `DiaryHit`                           | Draws the diary; semantic hits: `panel`, `toggle`                                                                                                                             |
-| `BetweenDungeonsStep` / `ActorColourKey` / `BetweenDungeonsViewModel`                        | The between-dungeons screen: step (`levelUp`/`trade`/`campaignComplete`/`partyWipe`), titles, score texts, statistics, wipe choices, hero sections, tradable items             |
-| `CampaignCompleteVm` / `CampaignCompleteScenarioRowVm` / `CampaignCompleteHeroRowVm` / `PartyWipeVm` / `WipeChoiceVm` / `WipeHighScoresVm` / `HighScoreRowVm` / `PartyWipeScoreRow` / `HeroSectionVm` / `TradeItemVm` / `GiveButtonLayoutItem`-shared types | The step's nested view models: campaign-complete scenarios and hero rows, wipe choices and ranked high scores, hero sections with tradable items                                |
-| `BetweenDungeonsLayout` / `ScoreSectionLayout` / `CampaignCompleteLayout` / `CampaignCompleteScenarioRow` / `CampaignCompleteHeroRow` / `PartyWipeButtonLayout` / `PartyWipeHighScoresLayout` / `HeroSectionLayoutItem` / `TradeItemLayoutItem` / `emptyBetweenDungeonsLayout` | The between-dungeons geometry — per-step section layouts and row items, computed by `layoutBetweenDungeons`                                                               |
-| `renderBetweenDungeons` / `RenderBetweenDungeonsOptions` / `hitTestBetweenDungeons` / `BetweenDungeonsHit` | Draws the screen; semantic hits: `actionButton`, `secondaryButton`, `item`, `giveItem`, `wipeButton`, `panel`, `backdrop`                                                        |
 | `RadialMenuViewModel` / `RadialButtonVm` / `RadialMenuLayout` / `RadialButtonItemLayout`    | The radial menu: ring origin (grid coords), ring buttons with label, icon and sprite ref (`layoutRadialMenu`, `emptyRadialMenuLayout`, `renderRadialTooltip`)                  |
 | `renderRadialMenu` / `RenderRadialMenuOptions` / `hitTestRadialMenu` / `RadialMenuHit`       | Draws the ring and its tooltip; semantic hits: `button` (button index)                                                                                                         |
 
